@@ -1,0 +1,7 @@
+vigie
+*.mfl
+*.db
+*.db-*
+*.err
+*.log
+test.db
