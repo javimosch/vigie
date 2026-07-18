@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.3.1 — 2026-07-18
+
+- **Fix (important):** `vigie update` resolved its own path by running `readlink -f /proc/self/exe` in a child process — where `self` is the child, so the atomic swap could target the wrong binary. Now resolves `argv[0]` via PATH lookup + `readlink -f`. The v0.3.0 release was pulled.
+
 ## v0.3.0 — 2026-07-18
 
 First public release. Everything below shipped in one day, built and verified end-to-end by an agent.

@@ -4,7 +4,7 @@
 
 // ---------- constants ----------
 
-func vigie_version() (v) { v = "0.3.0" }
+func vigie_version() (v) { v = "0.3.1" }
 func session_window() (s) { s = 1800 }
 
 // ---------- CLI arg helpers ----------
@@ -814,10 +814,23 @@ func cmd_feedback() {
     emit("{\"id\":\"" + id + "\",\"relayed\":" + rl + ",\"stored\":" + st + "}")
 }
 
+// self_path resolves this binary's real location. NEVER shell out to /proc/self/exe:
+// in a child process "self" is the child (readlink itself), and update would swap the
+// wrong file. Resolve args()[0] via PATH lookup + symlink canonicalization instead.
 func self_path() (p) {
-    code, out, _ := exec("readlink -f /proc/self/exe")
-    p = trim(out)
-    if code != 0 { p = args()[0] }
+    p = args()[0]
+    if contains(p, "/") == false {
+        code, out, _ := exec("command -v " + p)
+        if code == 0 {
+            r := trim(out)
+            if r != "" { p = r }
+        }
+    }
+    code2, out2, _ := exec("readlink -f " + p)
+    if code2 == 0 {
+        r2 := trim(out2)
+        if r2 != "" { p = r2 }
+    }
 }
 
 func cmd_update() {

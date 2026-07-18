@@ -22,6 +22,9 @@ a{color:var(--accent)}
 <p><a href="index.html">← vigie</a></p>
 <h1>Changelog</h1>
 
+<h2>v0.3.1 <span class="muted">— 2026-07-18</span></h2>
+<ul><li><b>Fix (important):</b> <code>vigie update</code> resolved its own path via a child process's <code>/proc/self/exe</code> — where "self" is the child, so the atomic swap could target the wrong binary. Now resolves <code>argv[0]</code> via PATH lookup + <code>readlink -f</code>. The v0.3.0 release was pulled.</li></ul>
+
 <h2>v0.3.0 <span class="muted">— 2026-07-18</span></h2>
 <p>First public release. Everything below shipped in one day, built and verified end-to-end by an agent.</p>
 
