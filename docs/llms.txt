@@ -18,4 +18,4 @@ Concepts: visitor = sha256(secret+day+site+ip+ua)[0:16] (daily rotation, no raw 
 
 Verbs: serve · site add/list · stats overview|timeseries|live|goals|retention|vitals|errors|pages|referrers|countries|devices|browsers|events|utm-* · sessions list/show · track · goal add/list/rm · funnel add/show/list/rm · snapshot [--globe] [--publish [--live]] · prune · guide · help-json · feedback · update · version
 
-HTTP API (Bearer VIGIE_ADMIN_TOKEN): GET /api/stats/<dim> (+ live&raw=1 for refresh loops, retention?weeks=, vitals, errors) · GET /api/sessions?site=[&sid=]?site=&since=&limit=&bucket=&path=&country=&device=&browser=&ref=&utm_source= · GET /api/snapshot?site= · POST /api/sites?domain= · open: POST /api/event, GET /vigie.js, GET /_health
+HTTP API (Bearer VIGIE_ADMIN_TOKEN): GET /api/stats/<dim>?site=&since=&limit=&bucket=&weeks=&path=&country=&device=&browser=&ref=&utm_source= (dim incl. live — add &raw=1 for refresh loops — retention, vitals, errors) · GET /api/sessions?site=[&sid=] · GET /api/snapshot?site= · POST /api/sites?domain= · open: POST /api/event, GET /vigie.js, GET /_health
