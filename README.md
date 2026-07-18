@@ -39,6 +39,10 @@ vigie stats overview --site example.com --since 7d
 - ~2 KB tracking snippet: SPA (pushState) tracking, custom events, identify, web vitals, error capture
 - Country via the `CF-IPCountry` header — free behind Cloudflare, no GeoIP database
 
+## Hosted (vigie cloud)
+
+Don't want to run it? **https://vigie.intrane.fr** is the hosted instance: your org gets a scoped API token, sites, and the same JSON verbs over HTTP — free for 10k events/month, then metered per-use through a [péage](https://peage.intrane.fr) wallet (€1 per extra 100k events, no subscription; over-quota ingest answers a machine-readable HTTP 402 your agent can act on). To get an org, ping [javi@intrane.fr](mailto:javi@intrane.fr) — onboarding is one CLI verb on our side. Self-hosting stays MIT and feature-complete; the cloud layer is just multi-tenancy + metering + ops.
+
 ## Install
 
 Grab the latest release binary (Linux x86_64; needs `libssl3` + `libsqlite3`, present on any stock distro):
