@@ -5,3 +5,4 @@ machin encode framework/machweb.src src/core.src src/geoip.src src/app.src src/g
 machin build vigie.mfl -o vigie
 echo "built ./vigie ($(wc -c < vigie) bytes)"
 ./vigie version
+[ "$1" = "test" ] && ./tests/functional.sh ./vigie
