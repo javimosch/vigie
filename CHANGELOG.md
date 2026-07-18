@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.4.1 — 2026-07-18
+
+- Globe: **drag to pan** (pointer events, touch included) — grabbing the planet stops the auto-rotation; double-click resumes the spin
+- `vigie snapshot --publish` gains `--title` to override the artifact title
+
 ## v0.4.0 — 2026-07-18
 
 Rybbit core-feature alignment, the agent-first way.

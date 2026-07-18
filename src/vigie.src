@@ -4,7 +4,7 @@
 
 // ---------- constants ----------
 
-func vigie_version() (v) { v = "0.4.0" }
+func vigie_version() (v) { v = "0.4.1" }
 func session_window() (s) { s = 1800 }
 
 // ---------- CLI arg helpers ----------
@@ -978,7 +978,8 @@ func cmd_snapshot() {
         artifact := argval("--artifact", replace(site, ".", "-"))
         kindlabel := "vigie — "
         if hasflag("--globe") == 1 { kindlabel = "vigie globe — " }
-        url := base + "/v1/publish?owner=" + url_encode(owner) + "&artifact=" + url_encode(artifact) + "&title=" + url_encode(kindlabel + site)
+        title := argval("--title", kindlabel + site)
+        url := base + "/v1/publish?owner=" + url_encode(owner) + "&artifact=" + url_encode(artifact) + "&title=" + url_encode(title)
         if hasflag("--live") == 1 { url = url + "&live=1" }
         headers := []string{"content-type: text/html; charset=utf-8"}
         tok := env("HART_TOKEN")
