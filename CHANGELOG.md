@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.5.0 — 2026-07-18
+
+Closing the capture + visual gap vs rybbit (geo depth parked deliberately).
+
+- **New captures:** OS + major version (UA-derived: Windows 10/11, macOS, iOS, Android N, ChromeOS, Linux), screen size, language — three new breakdown dims: `stats os|screens|languages` (snippet now sends `scr` + `lang`, ~2.2 KB)
+- **Choropleth globe:** the land dot-grid is country-tagged (1.5°, 6,918 dots — 1.8× denser), so countries tint green by 24h visitor share; plus an atmosphere glow. Still zero external assets.
+
 ## v0.4.3 — 2026-07-18
 
 - `vigie globe --site X` — one-verb retrieval of the ready-to-open war-room URL (site key resolved from the db, base from `--base`/`VIGIE_BASE_URL`)
