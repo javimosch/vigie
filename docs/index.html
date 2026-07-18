@@ -37,7 +37,7 @@ a{color:var(--accent)}
 <div class="wrap">
 <header>
   <h1>vigie<span class="dot">.</span></h1>
-  <p class="tag">Agent-first, cookieless web analytics in one static binary.<br><b>There is no dashboard.</b></p>
+  <p class="tag">Agent-first, cookieless web analytics in one static binary.<br><b>There is no dashboard</b> — there is a <a href="https://hart.intrane.fr/a/vigie/intrane-globe">living globe</a>.</p>
   <div class="btns">
     <a class="btn primary" href="https://github.com/javimosch/vigie">GitHub</a>
     <a class="btn ghost" href="https://github.com/javimosch/vigie/releases/latest/download/vigie">Download binary</a>
@@ -59,6 +59,9 @@ vigie stats overview --site example.com --since 7d
   <div class="card"><h3>The dashboard is an artifact</h3><p><code>vigie snapshot --publish</code> renders a self-contained HTML report and pushes it to <a href="https://github.com/javimosch/machin-hart">hart</a> → a live, shareable, disposable URL.</p></div>
   <div class="card"><h3>One file, one binary</h3><p>~60 KB native binary (<a href="https://github.com/javimosch/machin">MFL</a>), SQLite storage, <code>vigie prune</code> retention. No Node, no ClickHouse, no Docker.</p></div>
   <div class="card"><h3>The full query surface</h3><p>Timeseries, 9 breakdown dimensions, filters everywhere, goals with conversion rates, ordered funnels with drop-off — CLI and Bearer-gated HTTP API.</p></div>
+  <div class="card"><h3>Realtime + the living globe</h3><p><code>vigie stats live</code> is the last-5-min feed. <code>snapshot --globe --publish --live</code> turns it into a <a href="https://hart.intrane.fr/a/vigie/intrane-globe">self-refreshing world map</a> hosted on hart — canvas-only, zero external assets.</p></div>
+  <div class="card"><h3>Session explorer &amp; retention</h3><p><code>sessions list/show</code>: per-session rollups + the full ordered event trail. Weekly retention cohorts over identified users (<code>window.vigie.identify()</code>).</p></div>
+  <div class="card"><h3>Vitals &amp; errors, auto-collected</h3><p>The snippet ships LCP/FCP/CLS/INP/TTFB (p50/p75/p90 via <code>stats vitals</code>) and groups JS errors + rejections (<code>stats errors</code>) — nothing to configure.</p></div>
 </div>
 
 <h2>Install</h2>
@@ -72,7 +75,13 @@ chmod +x vigie && ./vigie guide   <span class="comment"># the manual is in the b
 <span class="k">vigie</span> goal add --site s --name signup --kind event --match signup
 <span class="k">vigie</span> funnel add --site s --name onboard --steps "/,signup,/welcome"
 <span class="k">vigie</span> funnel show --site s --name onboard
+<span class="k">vigie</span> stats live --site s                       <span class="comment"># realtime: last 5 minutes</span>
+<span class="k">vigie</span> sessions list --site s --since 24h        <span class="comment"># session explorer</span>
+<span class="k">vigie</span> stats retention --site s --weeks 8        <span class="comment"># cohorts over identified users</span>
+<span class="k">vigie</span> stats vitals --site s                     <span class="comment"># LCP/FCP/CLS/INP/TTFB p50/75/90</span>
+<span class="k">vigie</span> stats errors --site s                     <span class="comment"># grouped JS errors</span>
 <span class="k">vigie</span> snapshot --site s --since 30d --publish   <span class="comment"># → live hart URL</span>
+<span class="k">vigie</span> snapshot --site s --globe --publish --live <span class="comment"># → the living globe</span>
 <span class="k">vigie</span> feedback "loved it" --kind praise
 <span class="k">vigie</span> update                                    <span class="comment"># sha256-verified, atomic, .bak rollback</span></code></pre>
 
