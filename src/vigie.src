@@ -349,7 +349,35 @@ func handle_site_add(req) (res) {
     res = ok_json("{\"ok\":true,\"domain\":\"" + jesc(domain) + "\",\"added\":true}")
 }
 
+func llms_txt() (s) {
+    s = "# vigie\n\nAgent-first, cookieless web analytics in one static binary. No dashboard: JSON verbs for agents, on-demand hart-published HTML snapshots (and a living globe) for humans.\n\n"
+    s = s + "- Repo: https://github.com/javimosch/vigie (MIT)\n- Docs: https://javimosch.github.io/vigie/\n- Binary: https://github.com/javimosch/vigie/releases/latest/download/vigie\n- Manual: run `vigie guide` (embedded, version-exact). Catalog: `vigie help-json`.\n- CLI contract: https://cli-specs.intrane.fr/\n\n"
+    s = s + "This instance:\n- POST /api/event — ingest {site,t:pageview|event|vital|error,name,path,ref,q,props,uid,v} (open; 404 for unregistered sites)\n- GET /vigie.js — the ~2KB tracking snippet (SPA tracking, custom events, identify, web vitals, error capture)\n- GET /_health — liveness\n- GET /api/stats/<dim>?site=&since=... — overview|timeseries|live|goals|retention|vitals|errors|pages|referrers|countries|devices|browsers|events|utm-* (Bearer VIGIE_ADMIN_TOKEN)\n- GET /api/sessions?site=[&sid=] — session explorer (Bearer)\n- GET /api/snapshot?site= — HTML dashboard (Bearer)\n- POST /api/sites?domain= — register a site (Bearer)\n\n"
+    s = s + "Snippet: <script defer src=\"https://" + "vigie.intrane.fr" + "/vigie.js\" data-site=\"your-domain\"></script>\n"
+}
+
+func landing_html() (h) {
+    h = "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>vigie — agent-first analytics</title><style>"
+    h = h + "body{font-family:system-ui,sans-serif;background:#0d1117;color:#e6edf3;margin:0;display:flex;min-height:100vh;align-items:center;justify-content:center}"
+    h = h + ".card{max-width:560px;padding:40px 28px}h1{font-size:34px;margin:0}h1 span{color:#4f9cf9}"
+    h = h + "p{color:#8b949e;line-height:1.6}code,pre{background:#161b22;border:1px solid #30363d;border-radius:6px;font-family:ui-monospace,monospace;font-size:13px}"
+    h = h + "pre{padding:12px 14px;overflow-x:auto}code{padding:1px 5px}"
+    h = h + "a{color:#4f9cf9;text-decoration:none}.links{display:flex;gap:16px;flex-wrap:wrap;margin-top:18px;font-size:14px}"
+    h = h + "</style></head><body><div class='card'>"
+    h = h + "<h1>vigie<span>.</span></h1>"
+    h = h + "<p>Agent-first, cookieless web analytics. There is no dashboard here — this host ingests events and answers JSON. Humans: see the <a href='https://javimosch.github.io/vigie/'>docs</a>. Agents: fetch <a href='/llms.txt'>/llms.txt</a>.</p>"
+    h = h + "<pre>&lt;script defer src=\"https://vigie.intrane.fr/vigie.js\" data-site=\"your-domain\"&gt;&lt;/script&gt;</pre>"
+    h = h + "<p>Then <code>curl -H 'Authorization: Bearer …' /api/stats/overview?site=your-domain</code> — or run the <a href='https://github.com/javimosch/vigie/releases/latest/download/vigie'>binary</a> yourself.</p>"
+    h = h + "<div class='links'><a href='https://github.com/javimosch/vigie'>GitHub</a><a href='https://javimosch.github.io/vigie/'>Docs</a><a href='https://javimosch.github.io/vigie/changelog.html'>Changelog</a><a href='https://hart.intrane.fr/a/vigie/intrane-globe'>Live globe</a><a href='/_health'>Health</a></div>"
+    h = h + "</div></body></html>"
+}
+
 func handle(req) (res) {
+    if req.path == "/" { return ok_html(landing_html()) }
+    if has_prefix(req.path, "/llms.txt") {
+        res = ok_text(llms_txt())
+        return res
+    }
     if req.method == "POST" {
         if has_prefix(req.path, "/api/event") { return handle_event(req) }
         if has_prefix(req.path, "/api/sites") { return handle_site_add(req) }
