@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>vigie — changelog</title>
+<style>
+:root{--bg:#0d1117;--panel:#161b22;--border:#30363d;--fg:#e6edf3;--muted:#8b949e;--accent:#4f9cf9}
+body{font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--fg);margin:0;line-height:1.65}
+.wrap{max-width:760px;margin:0 auto;padding:40px 20px}
+h1{font-size:28px}
+h2{font-size:20px;margin-top:44px;border-bottom:1px solid var(--border);padding-bottom:8px}
+h3{font-size:15px;color:var(--accent)}
+li{margin:4px 0}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--panel);border:1px solid var(--border);border-radius:4px;padding:1px 5px;font-size:.9em}
+a{color:var(--accent)}
+.muted{color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+<p><a href="index.html">← vigie</a></p>
+<h1>Changelog</h1>
+
+<h2>v0.3.0 <span class="muted">— 2026-07-18</span></h2>
+<p>First public release. Everything below shipped in one day, built and verified end-to-end by an agent.</p>
+
+<h3>M3 — remote API + hosted</h3>
+<ul>
+<li>HTTP stats API mirroring every stats verb: <code>GET /api/stats/&lt;dim&gt;</code> (overview, timeseries, goals + 9 breakdowns) with query-param filters</li>
+<li><code>GET /api/snapshot?site=</code> — the HTML dashboard over HTTP</li>
+<li><code>POST /api/sites?domain=</code> — remote site registration</li>
+<li>All gated by <code>VIGIE_ADMIN_TOKEN</code> (Bearer); ingest + snippet always open</li>
+<li>Hosted instance: <a href="https://vigie.intrane.fr/_health">vigie.intrane.fr</a></li>
+</ul>
+
+<h3>M2 — goals, funnels, snapshots</h3>
+<ul>
+<li>Goals: <code>--kind event|path</code>, <code>/path*</code> prefix matching, per-session conversion rates</li>
+<li>Ordered funnels: per-session step progression with drop-off percentages</li>
+<li><code>vigie snapshot</code>: self-contained dark-mode HTML report (SVG charts, zero external assets); <code>--publish</code> POSTs it to a <a href="https://github.com/javimosch/machin-hart">hart</a> instance → live shareable URL</li>
+</ul>
+
+<h3>M1 — the full query surface + agent-first CLI contract</h3>
+<ul>
+<li><code>stats timeseries</code> (hour/day buckets) + 9 breakdown dimensions (pages, referrers, countries, devices, browsers, events, utm-*)</li>
+<li>Dimension filters (<code>--path --country --device --browser --ref --utm-source</code>) on every query</li>
+<li><a href="https://cli-specs.intrane.fr/">cli-specs</a> compliance: <code>guide</code>, <code>help-json</code>, <code>feedback</code> (dual-write relay), <code>update</code> (sha256-verified, smoke-tested, atomic swap with <code>.bak</code> rollback), semantic exit codes 80–119</li>
+<li><code>vigie prune</code> — retention</li>
+</ul>
+
+<h3>M0 — the spike</h3>
+<ul>
+<li>Cookieless ingest: visitor = <code>sha256(secret + day + site + ip + ua)[0:16]</code>, daily salt rotation, raw IP never stored</li>
+<li>Sessions (30-min inactivity window), bounce rate, referrer cleaning, UTM capture</li>
+<li><code>&lt;1 KB</code> JS snippet with SPA pushState tracking + <code>window.vigie(name, props)</code></li>
+<li>Server-side events: <code>vigie track</code> — agents/backends as first-class tracked users</li>
+<li>Country from <code>CF-IPCountry</code>, device/browser from UA, SQLite (WAL) storage</li>
+</ul>
+</div>
+</body>
+</html>

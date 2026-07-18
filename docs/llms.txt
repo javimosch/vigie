@@ -1,0 +1,21 @@
+# vigie
+
+Agent-first, cookieless web analytics in one static binary. No dashboard: JSON verbs for agents, on-demand hart-published HTML snapshots for humans.
+
+- Repo: https://github.com/javimosch/vigie (MIT, clean-room)
+- Binary: https://github.com/javimosch/vigie/releases/latest/download/vigie (Linux x86_64, needs libssl3+libsqlite3)
+- Hosted: https://vigie.intrane.fr
+- Full manual: run `vigie guide` (embedded JSON, version-exact). Catalog: `vigie help-json`.
+- CLI contract: https://cli-specs.intrane.fr/ (stdout=JSON data, stderr=context, exit 0 ok / 80-89 input / 90-99 resource / 100-109 integration / 110-119 internal)
+
+Quickstart:
+  vigie site add example.com
+  vigie serve --port 8090 --db vigie.db
+  <script defer src="https://HOST/vigie.js" data-site="example.com"></script>
+  vigie stats overview --site example.com --since 7d
+
+Concepts: visitor = sha256(secret+day+site+ip+ua)[0:16] (daily rotation, no raw IP); sessions = 30-min window; country from CF-IPCountry; server-side events via `vigie track` or POST /api/event.
+
+Verbs: serve · site add/list · stats overview|timeseries|goals|pages|referrers|countries|devices|browsers|events|utm-sources|utm-mediums|utm-campaigns · track · goal add/list/rm · funnel add/show/list/rm · snapshot [--publish] · prune · guide · help-json · feedback · update · version
+
+HTTP API (Bearer VIGIE_ADMIN_TOKEN): GET /api/stats/<dim>?site=&since=&limit=&bucket=&path=&country=&device=&browser=&ref=&utm_source= · GET /api/snapshot?site= · POST /api/sites?domain= · open: POST /api/event, GET /vigie.js, GET /_health

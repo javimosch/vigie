@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>vigie — agent-first, cookieless web analytics</title>
+<meta name="description" content="Web analytics with no dashboard: JSON verbs for agents, on-demand HTML snapshots for humans. One static binary, cookieless, MIT.">
+<style>
+:root{--bg:#0d1117;--panel:#161b22;--border:#30363d;--fg:#e6edf3;--muted:#8b949e;--accent:#4f9cf9;--green:#3fb950}
+*{box-sizing:border-box}
+body{font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--fg);margin:0;line-height:1.6}
+.wrap{max-width:860px;margin:0 auto;padding:0 20px}
+header{padding:64px 0 40px;text-align:center}
+h1{font-size:44px;margin:0 0 8px;letter-spacing:-.02em}
+h1 .dot{color:var(--accent)}
+.tag{color:var(--muted);font-size:19px;max-width:600px;margin:0 auto}
+.btns{margin:28px 0 0;display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+.btn{display:inline-block;padding:10px 20px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px}
+.btn.primary{background:var(--accent);color:#04101f}
+.btn.ghost{border:1px solid var(--border);color:var(--fg)}
+pre{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:16px 18px;overflow-x:auto;font-size:13.5px;line-height:1.55}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+p code,li code{background:var(--panel);border:1px solid var(--border);border-radius:4px;padding:1px 5px;font-size:.9em}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;margin:26px 0}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:18px}
+.card h3{margin:0 0 6px;font-size:15px}
+.card p{margin:0;color:var(--muted);font-size:13.5px}
+h2{font-size:22px;margin:52px 0 12px}
+.comment{color:var(--muted)}
+.k{color:var(--accent)}
+.g{color:var(--green)}
+footer{margin:70px 0 40px;color:var(--muted);font-size:13px;text-align:center;border-top:1px solid var(--border);padding-top:24px}
+a{color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1>vigie<span class="dot">.</span></h1>
+  <p class="tag">Agent-first, cookieless web analytics in one static binary.<br><b>There is no dashboard.</b></p>
+  <div class="btns">
+    <a class="btn primary" href="https://github.com/javimosch/vigie">GitHub</a>
+    <a class="btn ghost" href="https://github.com/javimosch/vigie/releases/latest/download/vigie">Download binary</a>
+    <a class="btn ghost" href="changelog.html">Changelog</a>
+  </div>
+</header>
+
+<pre><code><span class="comment"># the whole product in five lines</span>
+vigie site add example.com
+vigie serve --port 8090
+<span class="comment">&lt;script defer src="https://your-host/vigie.js" data-site="example.com"&gt;&lt;/script&gt;</span>
+vigie stats overview --site example.com --since 7d
+<span class="g">{"ok":true,"data":{"pageviews":1234,"visitors":410,"bounce_rate_pct":38,…}}</span></code></pre>
+
+<div class="grid">
+  <div class="card"><h3>Built for agents</h3><p>JSON-only stdout, semantic exit codes, an embedded <code>guide</code> manual, <code>help-json</code> introspection, sha256-verified <code>update</code>. Complies with the <a href="https://cli-specs.intrane.fr/">agent-first CLI specs</a>.</p></div>
+  <div class="card"><h3>Cookieless by construction</h3><p>Visitor = <code>sha256(secret+day+site+ip+ua)</code>. The salt rotates daily, the raw IP is never stored. No cookie banner needed.</p></div>
+  <div class="card"><h3>Agents are users too</h3><p><code>vigie track --name deploy --actor ci</code> — server-side events with no browser. Your cron job is a first-class analytics stream.</p></div>
+  <div class="card"><h3>The dashboard is an artifact</h3><p><code>vigie snapshot --publish</code> renders a self-contained HTML report and pushes it to <a href="https://github.com/javimosch/machin-hart">hart</a> → a live, shareable, disposable URL.</p></div>
+  <div class="card"><h3>One file, one binary</h3><p>~60 KB native binary (<a href="https://github.com/javimosch/machin">MFL</a>), SQLite storage, <code>vigie prune</code> retention. No Node, no ClickHouse, no Docker.</p></div>
+  <div class="card"><h3>The full query surface</h3><p>Timeseries, 9 breakdown dimensions, filters everywhere, goals with conversion rates, ordered funnels with drop-off — CLI and Bearer-gated HTTP API.</p></div>
+</div>
+
+<h2>Install</h2>
+<pre><code>curl -fsSL https://github.com/javimosch/vigie/releases/latest/download/vigie -o vigie
+chmod +x vigie && ./vigie guide   <span class="comment"># the manual is in the binary</span></code></pre>
+<p style="color:var(--muted);font-size:14px">Linux x86_64; needs <code>libssl3</code> + <code>libsqlite3</code> (stock on any distro). Or build from source with <a href="https://github.com/javimosch/machin">machin</a>: <code>./build.sh</code>.</p>
+
+<h2>The 60-second tour</h2>
+<pre><code><span class="k">vigie</span> stats timeseries --site s --bucket hour --since 24h
+<span class="k">vigie</span> stats referrers --site s --country FR --limit 5
+<span class="k">vigie</span> goal add --site s --name signup --kind event --match signup
+<span class="k">vigie</span> funnel add --site s --name onboard --steps "/,signup,/welcome"
+<span class="k">vigie</span> funnel show --site s --name onboard
+<span class="k">vigie</span> snapshot --site s --since 30d --publish   <span class="comment"># → live hart URL</span>
+<span class="k">vigie</span> feedback "loved it" --kind praise
+<span class="k">vigie</span> update                                    <span class="comment"># sha256-verified, atomic, .bak rollback</span></code></pre>
+
+<h2>Remote (hosted) — same verbs over HTTP</h2>
+<pre><code>curl -H "Authorization: Bearer $TOKEN" \
+  "https://vigie.intrane.fr/api/stats/overview?site=example.com&since=7d"</code></pre>
+
+<footer>
+  MIT · clean-room · built in <a href="https://github.com/javimosch/machin">MFL</a> · part of the agent-web stack: <a href="https://peage.intrane.fr">péage</a> pays, <a href="https://relais.intrane.fr">relais</a> receives, <a href="https://sso.intrane.fr">portier</a> authenticates — <b>vigie watches</b>.
+</footer>
+</div>
+</body>
+</html>

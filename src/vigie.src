@@ -4,7 +4,7 @@
 
 // ---------- constants ----------
 
-func vigie_version() (v) { v = "0.2.0" }
+func vigie_version() (v) { v = "0.3.0" }
 func session_window() (s) { s = 1800 }
 
 // ---------- CLI arg helpers ----------
@@ -195,10 +195,116 @@ func snippet_js() (s) {
     s = "(function(){var s=document.currentScript;var ep=new URL('api/event',s.src).href;var site=s.getAttribute('data-site')||location.hostname;function send(t,n,p){var b=JSON.stringify({site:site,t:t,name:n,path:location.pathname,ref:document.referrer,q:location.search,props:p?JSON.stringify(p):''});if(navigator.sendBeacon){navigator.sendBeacon(ep,b)}else{var x=new XMLHttpRequest();x.open('POST',ep,true);x.send(b)}}send('pageview','');var h=history.pushState;history.pushState=function(){h.apply(this,arguments);send('pageview','')};addEventListener('popstate',function(){send('pageview','')});window.vigie=function(n,p){send('event',n,p)}})();"
 }
 
+// remote API auth: VIGIE_ADMIN_TOKEN gates /api/stats, /api/snapshot, /api/sites.
+// Unset = open (local/self-host default). Ingest + snippet are always open.
+func authed(req) (yes) {
+    yes = 1
+    tok := env("VIGIE_ADMIN_TOKEN")
+    if tok != "" {
+        yes = 0
+        if header(req, "authorization") == "Bearer " + tok { yes = 1 }
+    }
+}
+
+func forbidden() (res) {
+    res = ok_json("{\"ok\":false,\"error\":\"unauthorized\",\"hint\":\"send Authorization: Bearer $VIGIE_ADMIN_TOKEN\"}")
+    res.status = "403 Forbidden"
+}
+
+// query-param filters for the HTTP API (mirror the CLI flags)
+func qfilter_sql(req) (w) {
+    w = ""
+    if query(req, "path") != "" { w = w + " AND path = ?" }
+    if query(req, "country") != "" { w = w + " AND country = ?" }
+    if query(req, "device") != "" { w = w + " AND device = ?" }
+    if query(req, "browser") != "" { w = w + " AND browser = ?" }
+    if query(req, "ref") != "" { w = w + " AND ref = ?" }
+    if query(req, "utm_source") != "" { w = w + " AND utm_source = ?" }
+}
+
+func qfilter_params(req) (p) {
+    p = []string{}
+    if query(req, "path") != "" { p = append(p, query(req, "path")) }
+    if query(req, "country") != "" { p = append(p, query(req, "country")) }
+    if query(req, "device") != "" { p = append(p, query(req, "device")) }
+    if query(req, "browser") != "" { p = append(p, query(req, "browser")) }
+    if query(req, "ref") != "" { p = append(p, query(req, "ref")) }
+    if query(req, "utm_source") != "" { p = append(p, query(req, "utm_source")) }
+}
+
+// GET /api/stats/<overview|timeseries|goals|pages|referrers|...>?site=&since=&limit=&bucket=&<filters>
+func handle_stats(req) (res) {
+    if authed(req) == 0 { return forbidden() }
+    site := query(req, "site")
+    if site == "" { return bad_request("{\"ok\":false,\"error\":\"missing site param\"}") }
+    p := req.path
+    qm := index(p, "?")
+    if qm >= 0 { p = substr(p, 0, qm) }
+    dim := substr(p, len("/api/stats/"), len(p))
+    since := query(req, "since")
+    if since == "" { since = "7d" }
+    db := db_open()
+    db_init(db)
+    fw := qfilter_sql(req)
+    fpx := qfilter_params(req)
+    j := ""
+    if dim == "overview" { j = overview_json(db, site, since, fw, fpx) } else {
+        if dim == "timeseries" {
+            bucket := query(req, "bucket")
+            if bucket == "" { bucket = "day" }
+            j = timeseries_json(db, site, since, bucket, fw, fpx)
+        } else {
+            if dim == "goals" { j = goals_json(db, site, since) } else {
+                limitn := query(req, "limit")
+                if limitn == "" { limitn = "10" }
+                j = breakdown_json(db, dim, site, since, limitn, fw, fpx)
+            }
+        }
+    }
+    sqlite_close(db)
+    if j == "" { return bad_request("{\"ok\":false,\"error\":\"unknown dimension\"}") }
+    res = ok_json("{\"ok\":true,\"data\":" + j + "}")
+}
+
+// GET /api/snapshot?site=&since= -> the self-contained HTML dashboard
+func handle_snapshot(req) (res) {
+    if authed(req) == 0 { return forbidden() }
+    site := query(req, "site")
+    if site == "" { return bad_request("{\"ok\":false,\"error\":\"missing site param\"}") }
+    since := query(req, "since")
+    if since == "" { since = "30d" }
+    db := db_open()
+    db_init(db)
+    html := snapshot_html(db, site, since)
+    sqlite_close(db)
+    res = ok_html(html)
+}
+
+// POST /api/sites?domain= — register a site remotely
+func handle_site_add(req) (res) {
+    if authed(req) == 0 { return forbidden() }
+    domain := query(req, "domain")
+    if domain == "" { return bad_request("{\"ok\":false,\"error\":\"missing domain param\"}") }
+    db := db_open()
+    db_init(db)
+    existing := sqlite_query(db, "SELECT id FROM sites WHERE domain = ?", []string{domain})
+    if existing != "[]" {
+        sqlite_close(db)
+        res = ok_json("{\"ok\":true,\"domain\":\"" + jesc(domain) + "\",\"existed\":true}")
+        return res
+    }
+    sqlite_exec(db, "INSERT INTO sites (domain, site_key, created_at) VALUES (?,?,?)", []string{domain, to_hex(rand_bytes(16)), str(now())})
+    sqlite_close(db)
+    res = ok_json("{\"ok\":true,\"domain\":\"" + jesc(domain) + "\",\"added\":true}")
+}
+
 func handle(req) (res) {
     if req.method == "POST" {
         if has_prefix(req.path, "/api/event") { return handle_event(req) }
+        if has_prefix(req.path, "/api/sites") { return handle_site_add(req) }
     }
+    if has_prefix(req.path, "/api/stats/") { return handle_stats(req) }
+    if has_prefix(req.path, "/api/snapshot") { return handle_snapshot(req) }
     if has_prefix(req.path, "/vigie.js") {
         res = ok_text(snippet_js())
         res.ctype = "application/javascript"
@@ -233,18 +339,23 @@ func since_secs(s) (secs) {
     }
 }
 
-func stats_overview(db, site, since) {
+func addp(base, fpx) (p) {
+    p = base
+    for _, x := range fpx { p = append(p, x) }
+}
+
+func overview_json(db, site, since, fw, fpx) (j) {
     cutoff := str(now() - since_secs(since))
-    p := []string{site, cutoff}
-    pageviews := q_count(db, "SELECT COUNT(*) AS n FROM events WHERE site = ? AND ts > ? AND kind = 'pageview'", p)
-    visitors := q_count(db, "SELECT COUNT(DISTINCT vid) AS n FROM events WHERE site = ? AND ts > ?", p)
-    sessions := q_count(db, "SELECT COUNT(DISTINCT sid) AS n FROM events WHERE site = ? AND ts > ?", p)
-    custom := q_count(db, "SELECT COUNT(*) AS n FROM events WHERE site = ? AND ts > ? AND kind = 'event'", p)
-    bounced := q_count(db, "SELECT COUNT(*) AS n FROM (SELECT sid FROM events WHERE site = ? AND ts > ? AND kind = 'pageview' GROUP BY sid HAVING COUNT(*) = 1)", p)
-    dur := q_count(db, "SELECT CAST(COALESCE(AVG(d),0) AS INTEGER) AS n FROM (SELECT MAX(ts)-MIN(ts) AS d FROM events WHERE site = ? AND ts > ? GROUP BY sid)", p)
+    p := addp([]string{site, cutoff}, fpx)
+    pageviews := q_count(db, "SELECT COUNT(*) AS n FROM events WHERE site = ? AND ts > ? AND kind = 'pageview'" + fw, p)
+    visitors := q_count(db, "SELECT COUNT(DISTINCT vid) AS n FROM events WHERE site = ? AND ts > ?" + fw, p)
+    sessions := q_count(db, "SELECT COUNT(DISTINCT sid) AS n FROM events WHERE site = ? AND ts > ?" + fw, p)
+    custom := q_count(db, "SELECT COUNT(*) AS n FROM events WHERE site = ? AND ts > ? AND kind = 'event'" + fw, p)
+    bounced := q_count(db, "SELECT COUNT(*) AS n FROM (SELECT sid FROM events WHERE site = ? AND ts > ? AND kind = 'pageview'" + fw + " GROUP BY sid HAVING COUNT(*) = 1)", p)
+    dur := q_count(db, "SELECT CAST(COALESCE(AVG(d),0) AS INTEGER) AS n FROM (SELECT MAX(ts)-MIN(ts) AS d FROM events WHERE site = ? AND ts > ?" + fw + " GROUP BY sid)", p)
     bounce_pct := 0
     if sessions > 0 { bounce_pct = bounced * 100 / sessions }
-    emit("{\"site\":\"" + site + "\",\"since\":\"" + since + "\",\"pageviews\":" + str(pageviews) + ",\"visitors\":" + str(visitors) + ",\"sessions\":" + str(sessions) + ",\"custom_events\":" + str(custom) + ",\"bounce_rate_pct\":" + str(bounce_pct) + ",\"avg_session_secs\":" + str(dur) + "}")
+    j = "{\"site\":\"" + site + "\",\"since\":\"" + since + "\",\"pageviews\":" + str(pageviews) + ",\"visitors\":" + str(visitors) + ",\"sessions\":" + str(sessions) + ",\"custom_events\":" + str(custom) + ",\"bounce_rate_pct\":" + str(bounce_pct) + ",\"avg_session_secs\":" + str(dur) + "}"
 }
 
 // ---------- CLI verbs ----------
@@ -299,18 +410,17 @@ func filter_params(base) (p) {
     if argval("--utm-source", "") != "" { p = append(p, argval("--utm-source", "")) }
 }
 
-func stats_timeseries(db, site, since) {
-    bucket := argval("--bucket", "day")
+func timeseries_json(db, site, since, bucket, fw, fpx) (j) {
     fmt := "%Y-%m-%d"
     if bucket == "hour" { fmt = "%Y-%m-%dT%H:00" }
     cutoff := str(now() - since_secs(since))
-    p := filter_params([]string{fmt, site, cutoff})
-    rows := sqlite_query(db, "SELECT strftime(?, ts, 'unixepoch') AS bucket, COUNT(CASE WHEN kind='pageview' THEN 1 END) AS pageviews, COUNT(DISTINCT vid) AS visitors, COUNT(CASE WHEN kind='event' THEN 1 END) AS events FROM events WHERE site = ? AND ts > ?" + filter_sql() + " GROUP BY bucket ORDER BY bucket", p)
-    emit(rows)
+    p := addp([]string{fmt, site, cutoff}, fpx)
+    j = sqlite_query(db, "SELECT strftime(?, ts, 'unixepoch') AS bucket, COUNT(CASE WHEN kind='pageview' THEN 1 END) AS pageviews, COUNT(DISTINCT vid) AS visitors, COUNT(CASE WHEN kind='event' THEN 1 END) AS events FROM events WHERE site = ? AND ts > ?" + fw + " GROUP BY bucket ORDER BY bucket", p)
 }
 
-// breakdown dimensions: whitelisted column + row-kind restriction
-func stats_breakdown(db, dim, site, since) {
+// breakdown dimensions: whitelisted column + row-kind restriction; "" = unknown dimension
+func breakdown_json(db, dim, site, since, limitn, fw, fpx) (j) {
+    j = ""
     col := ""
     cond := ""
     if dim == "pages" { col = "path"  cond = " AND kind = 'pageview'" }
@@ -322,13 +432,12 @@ func stats_breakdown(db, dim, site, since) {
     if dim == "utm-sources" { col = "utm_source"  cond = " AND utm_source != ''" }
     if dim == "utm-mediums" { col = "utm_medium"  cond = " AND utm_medium != ''" }
     if dim == "utm-campaigns" { col = "utm_campaign"  cond = " AND utm_campaign != ''" }
-    if col == "" { fail(80, "unknown stats dimension: " + dim, "vigie help-json lists dimensions") }
-    limitn := argval("--limit", "10")
-    if parse_int(limitn) < 1 { limitn = "10" }
+    if col == "" { return j }
+    n := parse_int(limitn)
+    if n < 1 { n = 10 }
     cutoff := str(now() - since_secs(since))
-    p := filter_params([]string{site, cutoff})
-    rows := sqlite_query(db, "SELECT " + col + " AS value, COUNT(*) AS hits, COUNT(DISTINCT vid) AS visitors FROM events WHERE site = ? AND ts > ?" + cond + filter_sql() + " GROUP BY " + col + " ORDER BY hits DESC LIMIT " + str(parse_int(limitn)), p)
-    emit(rows)
+    p := addp([]string{site, cutoff}, fpx)
+    j = sqlite_query(db, "SELECT " + col + " AS value, COUNT(*) AS hits, COUNT(DISTINCT vid) AS visitors FROM events WHERE site = ? AND ts > ?" + cond + fw + " GROUP BY " + col + " ORDER BY hits DESC LIMIT " + str(n), p)
 }
 
 func cmd_stats() {
@@ -340,9 +449,15 @@ func cmd_stats() {
     db_init(db)
     since := argval("--since", "7d")
     sub := a[2]
-    if sub == "overview" { stats_overview(db, site, since) } else {
-        if sub == "timeseries" { stats_timeseries(db, site, since) } else {
-            if sub == "goals" { stats_goals(db, site, since) } else { stats_breakdown(db, sub, site, since) }
+    fw := filter_sql()
+    fpx := filter_params([]string{})
+    if sub == "overview" { emit(overview_json(db, site, since, fw, fpx)) } else {
+        if sub == "timeseries" { emit(timeseries_json(db, site, since, argval("--bucket", "day"), fw, fpx)) } else {
+            if sub == "goals" { emit(goals_json(db, site, since)) } else {
+                bj := breakdown_json(db, sub, site, since, argval("--limit", "10"), fw, fpx)
+                if bj == "" { fail(80, "unknown stats dimension: " + sub, "vigie help-json lists dimensions") }
+                emit(bj)
+            }
         }
     }
     sqlite_close(db)
@@ -419,12 +534,12 @@ func cmd_goal() {
     sqlite_close(db)
 }
 
-func stats_goals(db, site, since) {
+func goals_json(db, site, since) (out) {
     cutoff := str(now() - since_secs(since))
     total := q_count(db, "SELECT COUNT(DISTINCT sid) AS n FROM events WHERE site = ? AND ts > ?", []string{site, cutoff})
     rows := sqlite_query(db, "SELECT name, kind, matcher FROM goals WHERE site = ? ORDER BY id", []string{site})
     goals := parse(rows, []GoalRow{})
-    out := "["
+    out = "["
     i := 0
     for _, g := range goals {
         clause, param := goal_clause(g.kind, g.matcher)
@@ -436,7 +551,6 @@ func stats_goals(db, site, since) {
         i = i + 1
     }
     out = out + "]"
-    emit(out)
 }
 
 // ---------- funnels ----------
@@ -645,7 +759,7 @@ func cmd_guide() {
     g = g + "\"model\":{\"what\":\"POST /api/event ingests pageviews/custom events (browser snippet or server-side). Visitors are a daily-rotating salted hash of IP+UA — no cookies, no consent banner, raw IP never stored. Sessions stitch events within a 30-min window. Everything is queried via `vigie stats *` returning JSON on stdout.\",\"storage\":\"SQLite (WAL), one file, indexes on (site,ts) and (site,vid,ts). Prune with `vigie prune`.\",\"server_side\":\"agents/backends are first-class tracked users: `vigie track --site s --name deploy --actor ci` or POST /api/event with no browser.\"},"
     g = g + "\"quickstart\":[\"vigie site add example.com\",\"vigie serve --port 8090 --db vigie.db\",\"add <script defer src=\\\"https://your-host/vigie.js\\\" data-site=\\\"example.com\\\"></script> to your pages\",\"vigie stats overview --site example.com --since 7d\"],"
     g = g + "\"concepts\":{\"visitor\":\"sha256(secret+day+site+ip+ua)[0:16], rotates daily — privacy by construction\",\"session\":\"reuse the visitor's last session id if their last event is <30min old\",\"bounce\":\"sessions with exactly one pageview / all sessions with pageviews\",\"country\":\"read from the CF-IPCountry header (free behind Cloudflare); empty otherwise\",\"filters\":\"every stats verb accepts --path --country --device --browser --ref --utm-source\"},"
-    g = g + "\"http\":{\"POST /api/event\":\"{site,t:pageview|event,name,path,ref,q,props} — 404 for unregistered sites\",\"GET /vigie.js\":\"the <1KB tracking snippet (auto SPA pushState tracking, window.vigie(name,props) for custom events)\",\"GET /_health\":\"liveness + version\"},"
+    g = g + "\"http\":{\"POST /api/event\":\"{site,t:pageview|event,name,path,ref,q,props} — 404 for unregistered sites; always open\",\"GET /vigie.js\":\"the <1KB tracking snippet (auto SPA pushState tracking, window.vigie(name,props) for custom events); always open\",\"GET /_health\":\"liveness + version; open\",\"GET /api/stats/<dim>\":\"remote stats API: dim = overview|timeseries|goals|pages|referrers|countries|devices|browsers|events|utm-sources|utm-mediums|utm-campaigns; params site, since, limit, bucket + filters path/country/device/browser/ref/utm_source. Gated by VIGIE_ADMIN_TOKEN (Bearer) when set\",\"GET /api/snapshot\":\"the HTML dashboard for ?site=&since= (gated)\",\"POST /api/sites?domain=\":\"register a site remotely (gated)\"},"
     g = g + "\"snapshots\":\"there is no dashboard. `vigie snapshot --site s --publish` renders a self-contained dark-mode HTML report and POSTs it to a hart instance (VIGIE_HART_URL, default https://hart.intrane.fr) -> a live shareable URL. Goals: `vigie goal add` then `vigie stats goals`. Funnels: `vigie funnel add --steps '/,signup,/done'` then `vigie funnel show` (ordered per-session progression).\","
     g = g + "\"gotchas\":[\"stats timeseries buckets are sparse — missing buckets mean zero, zero-fill client-side\",\"visitor counts across >1 day dedupe per-day (the hash rotates) — trend-accurate, not absolute uniques\",\"server-side events have device=browser=server\",\"the ingest endpoint answers 404 for sites you have not added — add them first\"],"
     g = g + "\"exit_codes\":{\"0\":\"ok\",\"80-89\":\"input/validation\",\"90-99\":\"resource (not found/exists)\",\"100-109\":\"integration (network/db)\",\"110-119\":\"internal\"}}"
