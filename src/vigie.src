@@ -70,6 +70,11 @@ func db_init(db) {
     sqlite_exec(db, "CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, site TEXT, vid TEXT, sid TEXT, kind TEXT, name TEXT, path TEXT, ref TEXT, utm_source TEXT, utm_medium TEXT, utm_campaign TEXT, country TEXT, device TEXT, browser TEXT, props TEXT)")
     sqlite_exec(db, "CREATE INDEX IF NOT EXISTS idx_events_site_ts ON events(site, ts)")
     sqlite_exec(db, "CREATE INDEX IF NOT EXISTS idx_events_vid ON events(site, vid, ts)")
+    has_uid := q_count(db, "SELECT COUNT(*) AS n FROM pragma_table_info('events') WHERE name = 'uid'", []string{})
+    if has_uid == 0 {
+        sqlite_exec(db, "ALTER TABLE events ADD COLUMN uid TEXT DEFAULT ''")
+        sqlite_exec(db, "ALTER TABLE events ADD COLUMN num REAL DEFAULT 0")
+    }
     sqlite_exec(db, "CREATE TABLE IF NOT EXISTS goals (id INTEGER PRIMARY KEY AUTOINCREMENT, site TEXT, name TEXT, kind TEXT, matcher TEXT, UNIQUE(site, name))")
     sqlite_exec(db, "CREATE TABLE IF NOT EXISTS funnels (id INTEGER PRIMARY KEY AUTOINCREMENT, site TEXT, name TEXT, steps TEXT, UNIQUE(site, name))")
     rows := sqlite_query(db, "SELECT v FROM meta WHERE k = 'secret'")
@@ -248,6 +253,7 @@ func handle_stats(req) (res) {
     fw := qfilter_sql(req)
     fpx := qfilter_params(req)
     j := ""
+    if dim == "live" { j = live_json(db, site) } else {
     if dim == "overview" { j = overview_json(db, site, since, fw, fpx) } else {
         if dim == "timeseries" {
             bucket := query(req, "bucket")
@@ -260,9 +266,10 @@ func handle_stats(req) (res) {
                 j = breakdown_json(db, dim, site, since, limitn, fw, fpx)
             }
         }
-    }
+    } }
     sqlite_close(db)
     if j == "" { return bad_request("{\"ok\":false,\"error\":\"unknown dimension\"}") }
+    if query(req, "raw") == "1" { return ok_json(j) }
     res = ok_json("{\"ok\":true,\"data\":" + j + "}")
 }
 
@@ -451,6 +458,7 @@ func cmd_stats() {
     sub := a[2]
     fw := filter_sql()
     fpx := filter_params([]string{})
+    if sub == "live" { emit(live_json(db, site)) } else {
     if sub == "overview" { emit(overview_json(db, site, since, fw, fpx)) } else {
         if sub == "timeseries" { emit(timeseries_json(db, site, since, argval("--bucket", "day"), fw, fpx)) } else {
             if sub == "goals" { emit(goals_json(db, site, since)) } else {
@@ -459,7 +467,7 @@ func cmd_stats() {
                 emit(bj)
             }
         }
-    }
+    } }
     sqlite_close(db)
 }
 
@@ -551,6 +559,21 @@ func goals_json(db, site, since) (out) {
         i = i + 1
     }
     out = out + "]"
+}
+
+// ---------- realtime (last 5 minutes) ----------
+
+func live_json(db, site) (j) {
+    cutoff := str(now() - 300)
+    p := []string{site, cutoff}
+    actives := q_count(db, "SELECT COUNT(DISTINCT vid) AS n FROM events WHERE site = ? AND ts > ?", p)
+    pv := q_count(db, "SELECT COUNT(*) AS n FROM events WHERE site = ? AND ts > ? AND kind = 'pageview'", p)
+    pages := sqlite_query(db, "SELECT path AS value, COUNT(*) AS hits FROM events WHERE site = ? AND ts > ? AND kind = 'pageview' GROUP BY path ORDER BY hits DESC LIMIT 5", p)
+    countries := sqlite_query(db, "SELECT country AS value, COUNT(DISTINCT vid) AS visitors FROM events WHERE site = ? AND ts > ? AND country != '' GROUP BY country ORDER BY visitors DESC", p)
+    latest := sqlite_query(db, "SELECT ts, kind, name, path, country FROM events WHERE site = ? AND ts > ? ORDER BY ts DESC LIMIT 10", p)
+    day_ago := str(now() - 86400)
+    countries24 := sqlite_query(db, "SELECT country AS value, COUNT(DISTINCT vid) AS visitors FROM events WHERE site = ? AND ts > ? AND country != '' GROUP BY country ORDER BY visitors DESC", []string{site, day_ago})
+    j = "{\"site\":\"" + site + "\",\"window_secs\":300,\"active_visitors\":" + str(actives) + ",\"pageviews\":" + str(pv) + ",\"pages\":" + pages + ",\"countries\":" + countries + ",\"countries_24h\":" + countries24 + ",\"latest\":" + latest + ",\"generated\":" + str(now()) + "}"
 }
 
 // ---------- funnels ----------
@@ -723,7 +746,8 @@ func cmd_snapshot() {
     since := argval("--since", "30d")
     db := db_open()
     db_init(db)
-    html := snapshot_html(db, site, since)
+    html := ""
+    if hasflag("--globe") == 1 { html = globe_html(db, site) } else { html = snapshot_html(db, site, since) }
     sqlite_close(db)
     out := argval("--out", "vigie-snapshot.html")
     write_file(out, html)
@@ -732,7 +756,10 @@ func cmd_snapshot() {
         if base == "" { base = "https://hart.intrane.fr" }
         owner := argval("--owner", "vigie")
         artifact := argval("--artifact", replace(site, ".", "-"))
-        url := base + "/v1/publish?owner=" + url_encode(owner) + "&artifact=" + url_encode(artifact) + "&title=" + url_encode("vigie — " + site)
+        kindlabel := "vigie — "
+        if hasflag("--globe") == 1 { kindlabel = "vigie globe — " }
+        url := base + "/v1/publish?owner=" + url_encode(owner) + "&artifact=" + url_encode(artifact) + "&title=" + url_encode(kindlabel + site)
+        if hasflag("--live") == 1 { url = url + "&live=1" }
         headers := []string{"content-type: text/html; charset=utf-8"}
         tok := env("HART_TOKEN")
         if tok != "" { headers = append(headers, "authorization: Bearer " + tok) }

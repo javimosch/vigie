@@ -1,0 +1,76 @@
+// vigie globe — rybbit's map, reimagined as a living hart artifact.
+// A self-contained canvas orthographic globe: land dot-grid + country markers sized by
+// visitors (24h) + pulses for last-5-min hits. Zero external assets (hart-CSP-safe).
+// Paints from window.HART_DATA when hart's live loop provides it, else the embedded data;
+// repaints on the hart:data event, so `hart refresh --url .../api/stats/live` keeps it alive.
+
+func globe_js() (js) {
+    js = "var PTS=" + globe_land_points() + ";var CENT=" + globe_centroids() + ";"
+    js = js + "function pick(){var h=window.HART_DATA;return (h&&h.site)?h:window.VIGIE_EMBED;}"
+    js = js + "var D=pick();"
+    js = js + "addEventListener('hart:data',function(e){D=(e.detail&&e.detail.site)?e.detail:pick();stats();});"
+    js = js + "var cv=document.getElementById('g'),cx=cv.getContext('2d');"
+    js = js + "var W=cv.clientWidth,dpr=window.devicePixelRatio||1;cv.width=W*dpr;cv.height=W*dpr;cx.scale(dpr,dpr);"
+    js = js + "var R=W*0.42,CXp=W/2,CYp=W/2,LAT0=0.38;"
+    js = js + "function proj(la,lo,rot){var lat=la*Math.PI/180,lon=lo*Math.PI/180-rot;"
+    js = js + "var cosc=Math.sin(LAT0)*Math.sin(lat)+Math.cos(LAT0)*Math.cos(lat)*Math.cos(lon);"
+    js = js + "if(cosc<0)return null;"
+    js = js + "var x=Math.cos(lat)*Math.sin(lon);var y=Math.cos(LAT0)*Math.sin(lat)-Math.sin(LAT0)*Math.cos(lat)*Math.cos(lon);"
+    js = js + "return[CXp+R*x,CYp-R*y,cosc];}"
+    js = js + "function stats(){var d=D||{};"
+    js = js + "el('av').textContent=d.active_visitors||0;el('pv').textContent=d.pageviews||0;"
+    js = js + "var pg=d.pages||[];el('pages').innerHTML=pg.map(function(p){return '<li><span>'+esc(p.value||'/')+'</span><b>'+p.hits+'</b></li>';}).join('')||'<li class=muted>quiet right now</li>';"
+    js = js + "var lt=d.latest||[];el('feed').innerHTML=lt.map(function(v){return '<li><i>'+(v.country||'--')+'</i> '+esc(v.kind==='event'?v.name:v.path)+'</li>';}).join('')||'<li class=muted>no hits in the last 5 min</li>';"
+    js = js + "if(d.generated){el('gen').textContent=new Date(d.generated*1000).toISOString().slice(11,19)+' UTC';}}"
+    js = js + "function el(i){return document.getElementById(i);}"
+    js = js + "function esc(s){return String(s).replace(/[<>&]/g,function(c){return {'<':'&lt;','>':'&gt;','&':'&amp;'}[c];});}"
+    js = js + "function markers(){var d=D||{},m={},max=1;var cs=d.countries_24h||d.countries||[];"
+    js = js + "for(var i=0;i<cs.length;i++){var c=cs[i];if(CENT[c.value]){m[c.value]=c.visitors;if(c.visitors>max)max=c.visitors;}}"
+    js = js + "return{m:m,max:max};}"
+    js = js + "function hot(){var d=D||{},h={};var cs=d.countries||[];for(var i=0;i<cs.length;i++)h[cs[i].value]=1;return h;}"
+    js = js + "var t0=Date.now();"
+    js = js + "function frame(){var t=(Date.now()-t0)/1000,rot=t*0.15;"
+    js = js + "cx.clearRect(0,0,W,W);"
+    js = js + "var gr=cx.createRadialGradient(CXp-R*0.3,CYp-R*0.35,R*0.1,CXp,CYp,R*1.05);"
+    js = js + "gr.addColorStop(0,'#14273f');gr.addColorStop(1,'#0a1220');"
+    js = js + "cx.beginPath();cx.arc(CXp,CYp,R,0,7);cx.fillStyle=gr;cx.fill();"
+    js = js + "cx.strokeStyle='rgba(79,156,249,0.25)';cx.lineWidth=1;cx.stroke();"
+    js = js + "for(var i=0;i<PTS.length;i+=2){var p=proj(PTS[i],PTS[i+1],rot);if(!p)continue;"
+    js = js + "cx.globalAlpha=0.15+0.45*p[2];cx.fillStyle='#7da8d8';cx.fillRect(p[0]-0.8,p[1]-0.8,1.6,1.6);}"
+    js = js + "cx.globalAlpha=1;var mk=markers(),h=hot();"
+    js = js + "for(var k in mk.m){var c=CENT[k],p2=proj(c[0],c[1],rot);if(!p2)continue;"
+    js = js + "var r=3+7*Math.sqrt(mk.m[k]/mk.max);"
+    js = js + "if(h[k]){var pu=r+3+3*Math.sin(t*4);cx.beginPath();cx.arc(p2[0],p2[1],pu,0,7);cx.strokeStyle='rgba(63,185,80,0.5)';cx.lineWidth=1.5;cx.stroke();}"
+    js = js + "cx.beginPath();cx.arc(p2[0],p2[1],r,0,7);"
+    js = js + "cx.fillStyle=h[k]?'rgba(63,185,80,0.85)':'rgba(79,156,249,0.8)';cx.fill();"
+    js = js + "cx.beginPath();cx.arc(p2[0],p2[1],r*0.4,0,7);cx.fillStyle='#e6f2ff';cx.fill();}"
+    js = js + "requestAnimationFrame(frame);}"
+    js = js + "stats();frame();"
+}
+
+// Emitted as a FRAGMENT (no doctype/html/head/body): hart wraps published content in its
+// own document skeleton, and a nested full document breaks parsing. Browsers render the
+// fragment fine when saved to a file too.
+func globe_html(db, site) (h) {
+    live := live_json(db, site)
+    h = "<style>"
+    h = h + "body{font-family:system-ui,sans-serif;background:#0a1220;color:#e6edf3;margin:0;padding:20px;display:flex;flex-direction:column;align-items:center;min-height:100vh}"
+    h = h + "h1{font-size:16px;font-weight:600;letter-spacing:.02em;margin:6px 0 2px}h1 b{color:#4f9cf9}"
+    h = h + ".sub{color:#8b949e;font-size:12px;margin-bottom:10px}"
+    h = h + "#g{width:min(88vw,560px);height:min(88vw,560px)}"
+    h = h + ".row{display:flex;gap:28px;margin:6px 0 14px}.kpi{text-align:center}.kpi b{display:block;font-size:30px;color:#3fb950}.kpi span{color:#8b949e;font-size:11px;text-transform:uppercase;letter-spacing:.08em}"
+    h = h + ".cols{display:flex;gap:20px;flex-wrap:wrap;justify-content:center;max-width:640px;width:100%}"
+    h = h + ".col{flex:1;min-width:220px;background:#111a2c;border:1px solid #22314b;border-radius:10px;padding:12px 14px}"
+    h = h + ".col h2{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:#8b949e;margin:0 0 8px}"
+    h = h + "ul{list-style:none;margin:0;padding:0;font-size:13px}li{display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid #1a2740}li:last-child{border:none}"
+    h = h + "li i{font-style:normal;color:#4f9cf9;margin-right:8px}.muted{color:#8b949e}"
+    h = h + "footer{color:#8b949e;font-size:11px;margin-top:14px}#gen{color:#3fb950}"
+    h = h + "</style>"
+    h = h + "<h1><b>vigie</b> globe — " + site + "</h1><div class='sub'>live traffic · updates at <span id='gen'>—</span></div>"
+    h = h + "<div class='row'><div class='kpi'><b id='av'>0</b><span>active now</span></div><div class='kpi'><b id='pv'>0</b><span>pageviews 5m</span></div></div>"
+    h = h + "<canvas id='g'></canvas>"
+    h = h + "<div class='cols'><div class='col'><h2>Pages right now</h2><ul id='pages'></ul></div><div class='col'><h2>Latest hits</h2><ul id='feed'></ul></div></div>"
+    h = h + "<footer>cookieless · agent-published · <span>vigie " + vigie_version() + "</span></footer>"
+    h = h + "<script>window.VIGIE_EMBED=" + live + ";</script>"
+    h = h + "<script>" + globe_js() + "</script>"
+}
