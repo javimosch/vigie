@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.8.1 — 2026-07-18
+
+- **`/report` — the live dashboard**: the full 22-section report rendered per request at `GET /report?site=&key=` (same per-site read key as `/globe`, now scoped to live + globe + report), with zero-JS period links (24h/7d/30d/12w). `vigie report --site X` prints the ready-to-open URL. Surfaces: `/report` = bookmark it, hart snapshot = share/archive it, `/globe` = watch it.
+
 ## v0.8.0 — 2026-07-18
 
 Closing the last derived-view gaps vs rybbit:

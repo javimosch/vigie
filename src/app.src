@@ -17,6 +17,7 @@ func handle(req) (res) {
     if has_prefix(req.path, "/api/users") { return handle_users(req) }
     if has_prefix(req.path, "/api/snapshot") { return handle_snapshot(req) }
     if has_prefix(req.path, "/globe") { return handle_globe(req) }
+    if has_prefix(req.path, "/report") { return handle_report(req) }
     if has_prefix(req.path, "/vigie.js") {
         res = ok_text(snippet_js())
         res.ctype = "application/javascript"
@@ -38,6 +39,7 @@ func main() {
     if cmd == "track" { cmd_track() }
     if cmd == "prune" { cmd_prune() }
     if cmd == "globe" { cmd_globe_url() }
+    if cmd == "report" { cmd_report_url() }
     if cmd == "sessions" { cmd_sessions() }
     if cmd == "users" { cmd_users() }
     if cmd == "goal" { cmd_goal() }
