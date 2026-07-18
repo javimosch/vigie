@@ -1,14 +1,14 @@
 // vigie globe — rybbit's map, reimagined as a living hart artifact.
-// A self-contained canvas orthographic globe: land dot-grid + country markers sized by
-// visitors (24h) + pulses for last-5-min hits. Zero external assets (hart-CSP-safe).
-// Paints from window.HART_DATA when hart's live loop provides it, else the embedded data;
-// repaints on the hart:data event, so `hart refresh --url .../api/stats/live` keeps it alive.
+// Self-contained canvas orthographic globe: a country-tagged land dot-grid rendered as a
+// CHOROPLETH (dots tint green with each country's 24h visitors), atmosphere glow, centroid
+// markers sized by visitors, pulses for last-5-min hits. Zero external assets (hart-CSP-safe).
+// Paints from window.HART_DATA when the hart live loop (or the /globe war-room poller)
+// provides it, else the embedded data; repaints on the hart:data event.
 
 func globe_js() (js) {
-    js = "var PTS=" + globe_land_points() + ";var CENT=" + globe_centroids() + ";"
+    js = "var PTS=" + globe_land_points() + ";var CODES=" + globe_codes() + ";var CENT=" + globe_centroids() + ";"
     js = js + "function pick(){var h=window.HART_DATA;return (h&&h.site)?h:window.VIGIE_EMBED;}"
     js = js + "var D=pick();"
-    js = js + "addEventListener('hart:data',function(e){D=(e.detail&&e.detail.site)?e.detail:pick();stats();});"
     js = js + "var cv=document.getElementById('g'),cx=cv.getContext('2d');"
     js = js + "var W=cv.clientWidth,dpr=window.devicePixelRatio||1;cv.width=W*dpr;cv.height=W*dpr;cx.scale(dpr,dpr);"
     js = js + "var R=W*0.42,CXp=W/2,CYp=W/2,LAT0=0.38;"
@@ -20,37 +20,55 @@ func globe_js() (js) {
     js = js + "cv.addEventListener('pointermove',function(e){if(!drag)return;rot-=(e.clientX-px)*0.005;LAT0+=(e.clientY-py)*0.005;if(LAT0>1.3)LAT0=1.3;if(LAT0<-1.3)LAT0=-1.3;px=e.clientX;py=e.clientY});"
     js = js + "cv.addEventListener('pointerup',function(){drag=0;cv.style.cursor='grab';armResume()});"
     js = js + "cv.addEventListener('pointercancel',function(){drag=0;cv.style.cursor='grab';armResume()});"
-    js = js + "function proj(la,lo,rot){var lat=la*Math.PI/180,lon=lo*Math.PI/180-rot;"
+    js = js + "function proj(la,lo,rotv){var lat=la*Math.PI/180,lon=lo*Math.PI/180-rotv;"
     js = js + "var cosc=Math.sin(LAT0)*Math.sin(lat)+Math.cos(LAT0)*Math.cos(lat)*Math.cos(lon);"
     js = js + "if(cosc<0)return null;"
     js = js + "var x=Math.cos(lat)*Math.sin(lon);var y=Math.cos(LAT0)*Math.sin(lat)-Math.sin(LAT0)*Math.cos(lat)*Math.cos(lon);"
     js = js + "return[CXp+R*x,CYp-R*y,cosc];}"
+    js = js + "function el(i){return document.getElementById(i);}"
+    js = js + "function esc(s){return String(s).replace(/[<>&]/g,function(c){return {'<':'&lt;','>':'&gt;','&':'&amp;'}[c];});}"
+    // choropleth: bucket every land dot 0..3 by its country's 24h visitor share
+    js = js + "var BUK=new Uint8Array(PTS.length/3);"
+    js = js + "function recolor(){var d=D||{},m={},max=1;var cs=d.countries_24h||d.countries||[];"
+    js = js + "for(var i=0;i<cs.length;i++){m[cs[i].value]=cs[i].visitors;if(cs[i].visitors>max)max=cs[i].visitors;}"
+    js = js + "for(var p=0;p<BUK.length;p++){var ci=PTS[p*3+2];var b=0;"
+    js = js + "if(ci>=0){var v=m[CODES[ci]]||0;if(v>0){var r2=v/max;b=1;if(r2>=0.33)b=2;if(r2>=0.66)b=3;}}"
+    js = js + "BUK[p]=b;}}"
     js = js + "function stats(){var d=D||{};"
     js = js + "el('av').textContent=d.active_visitors||0;el('pv').textContent=d.pageviews||0;"
     js = js + "var pg=d.pages||[];el('pages').innerHTML=pg.map(function(p){return '<li><span>'+esc(p.value||'/')+'</span><b>'+p.hits+'</b></li>';}).join('')||'<li class=muted>quiet right now</li>';"
     js = js + "var lt=d.latest||[];el('feed').innerHTML=lt.map(function(v){return '<li><i>'+(v.country||'--')+'</i> '+esc(v.kind==='event'?v.name:v.path)+'</li>';}).join('')||'<li class=muted>no hits in the last 5 min</li>';"
-    js = js + "if(d.generated){el('gen').textContent=new Date(d.generated*1000).toISOString().slice(11,19)+' UTC';}}"
-    js = js + "function el(i){return document.getElementById(i);}"
-    js = js + "function esc(s){return String(s).replace(/[<>&]/g,function(c){return {'<':'&lt;','>':'&gt;','&':'&amp;'}[c];});}"
+    js = js + "if(d.generated){el('gen').textContent=new Date(d.generated*1000).toISOString().slice(11,19)+' UTC';}"
+    js = js + "recolor();}"
+    js = js + "addEventListener('hart:data',function(e){D=(e.detail&&e.detail.site)?e.detail:pick();stats();});"
     js = js + "function markers(){var d=D||{},m={},max=1;var cs=d.countries_24h||d.countries||[];"
     js = js + "for(var i=0;i<cs.length;i++){var c=cs[i];if(CENT[c.value]){m[c.value]=c.visitors;if(c.visitors>max)max=c.visitors;}}"
     js = js + "return{m:m,max:max};}"
     js = js + "function hot(){var d=D||{},h={};var cs=d.countries||[];for(var i=0;i<cs.length;i++)h[cs[i].value]=1;return h;}"
+    js = js + "var DCOL=['#54749e','#3fa66b','#3fd67a','#8dffb8'];"
     js = js + "var t0=Date.now();"
     js = js + "function frame(){var t=(Date.now()-t0)/1000;var dt=t-lastT;lastT=t;if(auto)rot+=dt*0.15;"
     js = js + "cx.clearRect(0,0,W,W);"
+    // atmosphere: soft glow ring just outside the sphere
+    js = js + "var atm=cx.createRadialGradient(CXp,CYp,R*0.95,CXp,CYp,R*1.12);"
+    js = js + "atm.addColorStop(0,'rgba(79,156,249,0)');atm.addColorStop(0.55,'rgba(79,156,249,0.20)');atm.addColorStop(1,'rgba(79,156,249,0)');"
+    js = js + "cx.beginPath();cx.arc(CXp,CYp,R*1.12,0,7);cx.fillStyle=atm;cx.fill();"
     js = js + "var gr=cx.createRadialGradient(CXp-R*0.3,CYp-R*0.35,R*0.1,CXp,CYp,R*1.05);"
     js = js + "gr.addColorStop(0,'#14273f');gr.addColorStop(1,'#0a1220');"
     js = js + "cx.beginPath();cx.arc(CXp,CYp,R,0,7);cx.fillStyle=gr;cx.fill();"
-    js = js + "cx.strokeStyle='rgba(79,156,249,0.25)';cx.lineWidth=1;cx.stroke();"
-    js = js + "for(var i=0;i<PTS.length;i+=2){var p=proj(PTS[i],PTS[i+1],rot);if(!p)continue;"
-    js = js + "cx.globalAlpha=0.15+0.45*p[2];cx.fillStyle='#7da8d8';cx.fillRect(p[0]-0.8,p[1]-0.8,1.6,1.6);}"
+    js = js + "cx.strokeStyle='rgba(79,156,249,0.28)';cx.lineWidth=1;cx.stroke();"
+    // land dots in 4 passes (one fillStyle per choropleth bucket)
+    js = js + "for(var b=0;b<4;b++){cx.fillStyle=DCOL[b];var sz=b>0?2.0:1.5;"
+    js = js + "for(var p=0;p<BUK.length;p++){if(BUK[p]!==b)continue;"
+    js = js + "var pr=proj(PTS[p*3],PTS[p*3+1],rot);if(!pr)continue;"
+    js = js + "cx.globalAlpha=(b>0?0.35:0.16)+0.5*pr[2];"
+    js = js + "cx.fillRect(pr[0]-sz/2,pr[1]-sz/2,sz,sz);}}"
     js = js + "cx.globalAlpha=1;var mk=markers(),h=hot();"
     js = js + "for(var k in mk.m){var c=CENT[k],p2=proj(c[0],c[1],rot);if(!p2)continue;"
     js = js + "var r=3+7*Math.sqrt(mk.m[k]/mk.max);"
     js = js + "if(h[k]){var pu=r+3+3*Math.sin(t*4);cx.beginPath();cx.arc(p2[0],p2[1],pu,0,7);cx.strokeStyle='rgba(63,185,80,0.5)';cx.lineWidth=1.5;cx.stroke();}"
     js = js + "cx.beginPath();cx.arc(p2[0],p2[1],r,0,7);"
-    js = js + "cx.fillStyle=h[k]?'rgba(63,185,80,0.85)':'rgba(79,156,249,0.8)';cx.fill();"
+    js = js + "cx.fillStyle=h[k]?'rgba(63,185,80,0.9)':'rgba(79,156,249,0.85)';cx.fill();"
     js = js + "cx.beginPath();cx.arc(p2[0],p2[1],r*0.4,0,7);cx.fillStyle='#e6f2ff';cx.fill();}"
     js = js + "requestAnimationFrame(frame);}"
     js = js + "stats();frame();"
