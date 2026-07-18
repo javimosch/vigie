@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.8.0 — 2026-07-18
+
+Closing the last derived-view gaps vs rybbit:
+
+- **Entry/exit pages** as aggregate breakdowns: `stats entry-pages` / `stats exit-pages` (first/last pageview per session, window-function based)
+- **Traffic heatmap:** `stats heatmap` — weekday × hour matrix (UTC); rendered as a colored grid in the report
+- **Event properties:** `stats event-props [--event name]` — aggregates the JSON props of custom events via SQLite JSON1 (`plan = "pro"` style rows)
+- The full report gains all four cards (Entry pages, Exit pages, Event properties, Traffic heatmap) — 22 sections total when data is present
+
 ## v0.7.1 — 2026-07-18
 
 - **The snapshot is now the full report**: every metric vigie captures, in one hart-publishable page — pages, referrers, channels, countries/regions/cities, devices, browser versions, OS, screens, languages, UTM, custom events, web vitals (p50/75/90), goals, JS errors, and top journeys. Empty sections auto-omit. Grid layout.

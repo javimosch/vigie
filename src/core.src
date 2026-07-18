@@ -4,7 +4,7 @@
 
 // ---------- constants ----------
 
-func vigie_version() (v) { v = "0.7.1" }
+func vigie_version() (v) { v = "0.8.0" }
 func session_window() (s) { s = 1800 }
 
 // ---------- CLI arg helpers ----------
@@ -332,6 +332,11 @@ func site_key_ok(db, req, site) (yes) {
     if rows != "[]" { yes = 1 }
 }
 
+func qlim(req, def) (v) {
+    v = query(req, "limit")
+    if v == "" { v = def }
+}
+
 // GET /api/stats/<overview|timeseries|goals|pages|referrers|...>?site=&since=&limit=&bucket=&<filters>
 // Auth: admin Bearer for everything; the per-site read key (?key=) is accepted for dim=live only.
 func handle_stats(req) (res) {
@@ -359,6 +364,10 @@ func handle_stats(req) (res) {
     fpx := qfilter_params(req)
     j := ""
     if dim == "live" { j = live_json(db, site) } else {
+    if dim == "entry-pages" { j = edge_pages_json(db, site, since, qlim(req, "10"), 0) } else {
+    if dim == "exit-pages" { j = edge_pages_json(db, site, since, qlim(req, "10"), 1) } else {
+    if dim == "heatmap" { j = heatmap_json(db, site, since) } else {
+    if dim == "event-props" { j = event_props_json(db, site, since, query(req, "event"), qlim(req, "15")) } else {
     if dim == "journeys" {
         jl := query(req, "limit")
         if jl == "" { jl = "15" }
@@ -387,7 +396,7 @@ func handle_stats(req) (res) {
                 j = breakdown_json(db, dim, site, since, limitn, fw, fpx)
             }
         }
-    } } } } } }
+    } } } } } } } } } }
     sqlite_close(db)
     if j == "" { return bad_request("{\"ok\":false,\"error\":\"unknown dimension\"}") }
     if query(req, "raw") == "1" { return ok_json(j) }
@@ -451,7 +460,7 @@ func handle_site_add(req) (res) {
 func llms_txt() (s) {
     s = "# vigie\n\nAgent-first, cookieless web analytics in one static binary. No dashboard: JSON verbs for agents, on-demand hart-published HTML snapshots (and a living globe) for humans.\n\n"
     s = s + "- Repo: https://github.com/javimosch/vigie (MIT)\n- Docs: https://javimosch.github.io/vigie/\n- Binary: https://github.com/javimosch/vigie/releases/latest/download/vigie\n- Manual: run `vigie guide` (embedded, version-exact). Catalog: `vigie help-json`.\n- CLI contract: https://cli-specs.intrane.fr/\n\n"
-    s = s + "This instance:\n- POST /api/event — ingest {site,t:pageview|event|vital|error,name,path,ref,q,props,uid,v} (open; 404 for unregistered sites)\n- GET /vigie.js — the ~2KB tracking snippet (SPA tracking, custom events, identify, web vitals, error capture)\n- GET /_health — liveness\n- GET /api/stats/<dim>?site=&since=... — overview|timeseries|live|goals|retention|vitals|errors|journeys|channels|pages|referrers|countries|devices|browsers|events|utm-* (Bearer VIGIE_ADMIN_TOKEN)\n- GET /api/sessions?site=[&sid=] — session explorer (Bearer)\n- GET /api/snapshot?site= — HTML dashboard (Bearer)\n- POST /api/sites?domain= — register a site (Bearer)\n\n"
+    s = s + "This instance:\n- POST /api/event — ingest {site,t:pageview|event|vital|error,name,path,ref,q,props,uid,v} (open; 404 for unregistered sites)\n- GET /vigie.js — the ~2KB tracking snippet (SPA tracking, custom events, identify, web vitals, error capture)\n- GET /_health — liveness\n- GET /api/stats/<dim>?site=&since=... — overview|timeseries|live|goals|retention|vitals|errors|journeys|channels|heatmap|event-props|pages|entry-pages|exit-pages|referrers|countries|devices|browsers|events|utm-* (Bearer VIGIE_ADMIN_TOKEN)\n- GET /api/sessions?site=[&sid=] — session explorer (Bearer)\n- GET /api/snapshot?site= — HTML dashboard (Bearer)\n- POST /api/sites?domain= — register a site (Bearer)\n\n"
     s = s + "Snippet: <script defer src=\"https://" + "vigie.intrane.fr" + "/vigie.js\" data-site=\"your-domain\"></script>\n"
 }
 
@@ -598,6 +607,30 @@ func timeseries_json(db, site, since, bucket, fw, fpx) (j) {
     j = sqlite_query(db, "SELECT strftime(?, ts, 'unixepoch') AS bucket, COUNT(CASE WHEN kind='pageview' THEN 1 END) AS pageviews, COUNT(DISTINCT vid) AS visitors, COUNT(CASE WHEN kind='event' THEN 1 END) AS events FROM events WHERE site = ? AND ts > ?" + fw + " GROUP BY bucket ORDER BY bucket", p)
 }
 
+// entry/exit pages: first/last pageview path per session, aggregated
+func edge_pages_json(db, site, since, limitn, last) (j) {
+    n := parse_int(limitn)
+    if n < 1 { n = 10 }
+    ordr := "ts, id"
+    if last == 1 { ordr = "ts DESC, id DESC" }
+    cutoff := str(now() - since_secs(since))
+    j = sqlite_query(db, "SELECT path AS value, COUNT(*) AS hits, COUNT(DISTINCT vid) AS visitors FROM (SELECT sid, vid, path, ROW_NUMBER() OVER (PARTITION BY sid ORDER BY " + ordr + ") AS rn FROM events WHERE site = ? AND ts > ? AND kind = 'pageview') WHERE rn = 1 GROUP BY path ORDER BY hits DESC LIMIT " + str(n), []string{site, cutoff})
+}
+
+// weekday x hour traffic heatmap (dow 0=Sunday, hr 00-23, UTC)
+func heatmap_json(db, site, since) (j) {
+    cutoff := str(now() - since_secs(since))
+    j = sqlite_query(db, "SELECT CAST(strftime('%w', ts, 'unixepoch') AS INTEGER) AS dow, CAST(strftime('%H', ts, 'unixepoch') AS INTEGER) AS hr, COUNT(CASE WHEN kind='pageview' THEN 1 END) AS pageviews, COUNT(DISTINCT vid) AS visitors FROM events WHERE site = ? AND ts > ? GROUP BY dow, hr ORDER BY dow, hr", []string{site, cutoff})
+}
+
+// custom-event property aggregation (SQLite JSON1 over the props column)
+func event_props_json(db, site, since, evname, limitn) (j) {
+    n := parse_int(limitn)
+    if n < 1 { n = 15 }
+    cutoff := str(now() - since_secs(since))
+    j = sqlite_query(db, "SELECT e.name || ' . ' || j.key || ' = ' || j.value AS value, COUNT(*) AS hits, COUNT(DISTINCT e.vid) AS visitors FROM events e, json_each(e.props) j WHERE e.site = ? AND e.ts > ? AND e.kind = 'event' AND e.props != '' AND (e.name = ? OR ? = '') GROUP BY e.name, j.key, j.value ORDER BY hits DESC LIMIT " + str(n), []string{site, cutoff, evname, evname})
+}
+
 // breakdown dimensions: whitelisted column + row-kind restriction; "" = unknown dimension
 func breakdown_json(db, dim, site, since, limitn, fw, fpx) (j) {
     j = ""
@@ -642,6 +675,10 @@ func cmd_stats() {
     fw := filter_sql()
     fpx := filter_params([]string{})
     if sub == "live" { emit(live_json(db, site)) } else {
+    if sub == "entry-pages" { emit(edge_pages_json(db, site, since, argval("--limit", "10"), 0)) } else {
+    if sub == "exit-pages" { emit(edge_pages_json(db, site, since, argval("--limit", "10"), 1)) } else {
+    if sub == "heatmap" { emit(heatmap_json(db, site, since)) } else {
+    if sub == "event-props" { emit(event_props_json(db, site, since, argval("--event", ""), argval("--limit", "15"))) } else {
     if sub == "journeys" { emit(journeys_json(db, site, since, argval("--limit", "15"))) } else {
     if sub == "retention" { emit(retention_json(db, site, argval("--weeks", "8"))) } else {
     if sub == "vitals" { emit(vitals_json(db, site, since)) } else {
@@ -654,7 +691,7 @@ func cmd_stats() {
                 emit(bj)
             }
         }
-    } } } } } }
+    } } } } } } } } } }
     sqlite_close(db)
 }
 
@@ -1264,6 +1301,80 @@ func snap_svg(series) (svg) {
     svg = svg + "</svg>"
 }
 
+type HeatRow struct {
+    dow       int
+    hr        int
+    pageviews int
+    visitors  int
+}
+
+func snap_edge(db, title, site, since, last) (h) {
+    h = ""
+    ej := edge_pages_json(db, site, since, "8", last)
+    if ej == "[]" { return h }
+    rows := parse(ej, []BreakRow{})
+    h = "<div class='card'><h2>" + title + "</h2><table><tr><th></th><th>sessions</th><th>visitors</th></tr>"
+    for _, r := range rows {
+        h = h + "<tr><td>" + jesc(r.value) + "</td><td>" + str(r.hits) + "</td><td>" + str(r.visitors) + "</td></tr>"
+    }
+    h = h + "</table></div>"
+}
+
+func snap_props(db, site, since) (h) {
+    h = ""
+    pj := event_props_json(db, site, since, "", "10")
+    if pj == "[]" { return h }
+    rows := parse(pj, []BreakRow{})
+    h = "<div class='card'><h2>Event properties</h2><table><tr><th></th><th>hits</th><th>visitors</th></tr>"
+    for _, r := range rows {
+        h = h + "<tr><td>" + jesc(r.value) + "</td><td>" + str(r.hits) + "</td><td>" + str(r.visitors) + "</td></tr>"
+    }
+    h = h + "</table></div>"
+}
+
+func snap_heatmap(db, site, since) (h) {
+    h = ""
+    hj := heatmap_json(db, site, since)
+    if hj == "[]" { return h }
+    rows := parse(hj, []HeatRow{})
+    grid := make(map[string]int)
+    maxv := 1
+    for _, r := range rows {
+        grid[str(r.dow) + ":" + str(r.hr)] = r.pageviews
+        if r.pageviews > maxv { maxv = r.pageviews }
+    }
+    days := []string{"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"}
+    h = "<div class='card wide'><h2>Traffic heatmap <span class='muted'>(weekday x hour, UTC)</span></h2><div class='hm'>"
+    h = h + "<span></span>"
+    hr := 0
+    while hr < 24 {
+        lbl := ""
+        if hr % 4 == 0 { lbl = str(hr) }
+        h = h + "<span class='hml'>" + lbl + "</span>"
+        hr = hr + 1
+    }
+    d := 0
+    while d < 7 {
+        h = h + "<span class='hml'>" + days[d] + "</span>"
+        hr = 0
+        while hr < 24 {
+            v := grid[str(d) + ":" + str(hr)]
+            op := "0.06"
+            if v > 0 {
+                pctv := v * 100 / maxv
+                op = "0.25"
+                if pctv >= 25 { op = "0.5" }
+                if pctv >= 50 { op = "0.75" }
+                if pctv >= 75 { op = "1" }
+            }
+            h = h + "<i style='background:rgba(79,156,249," + op + ")' title='" + days[d] + " " + str(hr) + "h: " + str(v) + "'></i>"
+            hr = hr + 1
+        }
+        d = d + 1
+    }
+    h = h + "</div></div>"
+}
+
 func snapshot_html(db, site, since) (h) {
     cutoff := str(now() - since_secs(since))
     p := []string{site, cutoff}
@@ -1276,7 +1387,7 @@ func snapshot_html(db, site, since) (h) {
     if sessions > 0 { bounce_pct = bounced * 100 / sessions }
     series := parse(sqlite_query(db, "SELECT strftime('%Y-%m-%d', ts, 'unixepoch') AS bucket, COUNT(CASE WHEN kind='pageview' THEN 1 END) AS pageviews, COUNT(DISTINCT vid) AS visitors, COUNT(CASE WHEN kind='event' THEN 1 END) AS events FROM events WHERE site = ? AND ts > ? GROUP BY bucket ORDER BY bucket", p), []TSRow{})
     h = "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>vigie — " + site + "</title><style>"
-    h = h + "body{font-family:system-ui,sans-serif;background:#0d1117;color:#e6edf3;margin:0;padding:24px;max-width:1040px;margin:0 auto}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px}.grid .card{margin:0}.card.wide{grid-column:1/-1}h1{font-size:20px}h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:#8b949e;margin:0 0 10px}.muted{color:#8b949e}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin:18px 0}.stat{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px}.stat b{display:block;font-size:24px}.stat span{color:#8b949e;font-size:12px}.card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;margin:12px 0}table{width:100%;border-collapse:collapse;font-size:13px}td,th{text-align:left;padding:4px 8px;border-bottom:1px solid #21262d}th{color:#8b949e;font-weight:normal}td:nth-child(2),td:nth-child(3),th:nth-child(2),th:nth-child(3){text-align:right}svg{width:100%;height:190px}footer{color:#8b949e;font-size:12px;margin-top:20px}"
+    h = h + "body{font-family:system-ui,sans-serif;background:#0d1117;color:#e6edf3;margin:0;padding:24px;max-width:1040px;margin:0 auto}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px}.grid .card{margin:0}.card.wide{grid-column:1/-1}.hm{display:grid;grid-template-columns:34px repeat(24,1fr);gap:2px;align-items:center}.hm i{display:block;height:14px;border-radius:2px}.hml{font-size:9px;color:#8b949e;text-align:center}h1{font-size:20px}h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:#8b949e;margin:0 0 10px}.muted{color:#8b949e}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin:18px 0}.stat{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px}.stat b{display:block;font-size:24px}.stat span{color:#8b949e;font-size:12px}.card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;margin:12px 0}table{width:100%;border-collapse:collapse;font-size:13px}td,th{text-align:left;padding:4px 8px;border-bottom:1px solid #21262d}th{color:#8b949e;font-weight:normal}td:nth-child(2),td:nth-child(3),th:nth-child(2),th:nth-child(3){text-align:right}svg{width:100%;height:190px}footer{color:#8b949e;font-size:12px;margin-top:20px}"
     h = h + "</style></head><body><h1>" + site + " <span class='muted'>· last " + since + " · generated by vigie</span></h1>"
     h = h + "<div class='cards'>"
     h = h + "<div class='stat'><b>" + str(pageviews) + "</b><span>pageviews</span></div>"
@@ -1288,6 +1399,8 @@ func snapshot_html(db, site, since) (h) {
     h = h + "<div class='card'><h2>pageviews per day</h2>" + snap_svg(series) + "</div>"
     h = h + "<div class='grid'>"
     h = h + snap_table(db, "Top pages", "pages", site, since)
+    h = h + snap_edge(db, "Entry pages", site, since, 0)
+    h = h + snap_edge(db, "Exit pages", site, since, 1)
     h = h + snap_table(db, "Referrers", "referrers", site, since)
     h = h + snap_table(db, "Channels", "channels", site, since)
     h = h + snap_table(db, "Countries", "countries", site, since)
@@ -1300,10 +1413,12 @@ func snapshot_html(db, site, since) (h) {
     h = h + snap_table(db, "Languages", "languages", site, since)
     h = h + snap_table(db, "UTM sources", "utm-sources", site, since)
     h = h + snap_table(db, "Custom events", "events", site, since)
+    h = h + snap_props(db, site, since)
     h = h + snap_vitals(db, site, since)
     h = h + snap_goals(db, site, since)
     h = h + snap_errors(db, site, since)
     h = h + snap_journeys(db, site, since)
+    h = h + snap_heatmap(db, site, since)
     h = h + "</div>"
     h = h + "<footer>vigie " + vigie_version() + " — agent-first, cookieless analytics. Snapshot generated " + time_format_utc(now(), "%Y-%m-%d %H:%M") + " UTC.</footer></body></html>"
 }
@@ -1355,7 +1470,7 @@ func cmd_guide() {
     g = g + "\"model\":{\"what\":\"POST /api/event ingests pageviews/custom events (browser snippet or server-side). Visitors are a daily-rotating salted hash of IP+UA — no cookies, no consent banner, raw IP never stored. Sessions stitch events within a 30-min window. Everything is queried via `vigie stats *` returning JSON on stdout.\",\"storage\":\"SQLite (WAL), one file, indexes on (site,ts) and (site,vid,ts). Prune with `vigie prune`.\",\"server_side\":\"agents/backends are first-class tracked users: `vigie track --site s --name deploy --actor ci` or POST /api/event with no browser.\"},"
     g = g + "\"quickstart\":[\"vigie site add example.com\",\"vigie serve --port 8090 --db vigie.db\",\"add <script defer src=\\\"https://your-host/vigie.js\\\" data-site=\\\"example.com\\\"></script> to your pages\",\"vigie stats overview --site example.com --since 7d\"],"
     g = g + "\"concepts\":{\"visitor\":\"sha256(secret+day+site+ip+ua)[0:16], rotates daily — privacy by construction\",\"session\":\"reuse the visitor's last session id if their last event is <30min old\",\"bounce\":\"sessions with exactly one pageview / all sessions with pageviews\",\"country\":\"read from the CF-IPCountry header (free behind Cloudflare); empty otherwise\",\"filters\":\"every stats verb accepts --path --country --device --browser --ref --utm-source\"},"
-    g = g + "\"http\":{\"POST /api/event\":\"{site,t:pageview|event,name,path,ref,q,props} — 404 for unregistered sites; always open\",\"GET /vigie.js\":\"the <1KB tracking snippet (auto SPA pushState tracking, window.vigie(name,props) for custom events); always open\",\"GET /_health\":\"liveness + version; open\",\"GET /api/stats/<dim>\":\"remote stats API: dim = overview|timeseries|live|goals|retention|vitals|errors|journeys|channels|pages|referrers|countries|regions|cities|devices|browsers|browser-versions|os|screens|languages|events|utm-sources|utm-mediums|utm-campaigns; params site, since, limit, bucket + filters path/country/device/browser/ref/utm_source. Gated by VIGIE_ADMIN_TOKEN (Bearer) when set\",\"GET /api/snapshot\":\"the HTML dashboard for ?site=&since= (gated)\",\"GET /globe\":\"the war-room: a live globe page polling its own live feed every 5s; ?site=&key=<per-site read key> (or admin Bearer). The read key grants live aggregates only — get it via `vigie site key`, revoke via `site rotate-key`\",\"POST /api/sites?domain=\":\"register a site remotely (gated)\"},"
+    g = g + "\"http\":{\"POST /api/event\":\"{site,t:pageview|event,name,path,ref,q,props} — 404 for unregistered sites; always open\",\"GET /vigie.js\":\"the <1KB tracking snippet (auto SPA pushState tracking, window.vigie(name,props) for custom events); always open\",\"GET /_health\":\"liveness + version; open\",\"GET /api/stats/<dim>\":\"remote stats API: dim = overview|timeseries|live|goals|retention|vitals|errors|journeys|channels|heatmap|event-props|pages|entry-pages|exit-pages|referrers|countries|regions|cities|devices|browsers|browser-versions|os|screens|languages|events|utm-sources|utm-mediums|utm-campaigns; params site, since, limit, bucket + filters path/country/device/browser/ref/utm_source. Gated by VIGIE_ADMIN_TOKEN (Bearer) when set\",\"GET /api/snapshot\":\"the HTML dashboard for ?site=&since= (gated)\",\"GET /globe\":\"the war-room: a live globe page polling its own live feed every 5s; ?site=&key=<per-site read key> (or admin Bearer). The read key grants live aggregates only — get it via `vigie site key`, revoke via `site rotate-key`\",\"POST /api/sites?domain=\":\"register a site remotely (gated)\"},"
     g = g + "\"snapshots\":\"there is no dashboard. `vigie snapshot --site s --publish` renders a self-contained dark-mode HTML report and POSTs it to a hart instance (VIGIE_HART_URL, default https://hart.intrane.fr) -> a live shareable URL. Goals: `vigie goal add` then `vigie stats goals`. Funnels: `vigie funnel add --steps '/,signup,/done'` then `vigie funnel show` (ordered per-session progression).\","
     g = g + "\"realtime_and_globe\":\"`vigie stats live` = last-5-min feed (also GET /api/stats/live; add &raw=1 for the bare object — that is what hart refresh should pull). `vigie snapshot --globe --publish --live` publishes a rotating world-map artifact to hart; wire `hart refresh <id> --url .../api/stats/live?site=S&raw=1 --every 60s --header 'authorization: Bearer TOKEN'` and it repaints itself while watched.\","
     g = g + "\"sessions_retention_vitals_errors\":\"`vigie sessions list/show` = per-session rollups + ordered event trail. Retention cohorts need IDENTIFIED users: the daily-rotating visitor hash cannot follow a person across days (privacy by design), so call window.vigie.identify('user-id') in the browser or pass --uid/--actor on `vigie track`; `vigie stats retention` then computes weekly cohorts over uid. The snippet auto-collects web vitals (LCP/FCP/CLS/INP/TTFB, sent on pagehide; CLS is scaled x1000) -> `vigie stats vitals` (p50/p75/p90), and auto-captures JS errors + unhandled rejections (max 5/page) -> `vigie stats errors` (grouped by message).\","
@@ -1369,7 +1484,7 @@ func cmd_help_json() {
     h := "{\"schema\":\"vigie.help/v1\",\"version\":\"" + v + "\",\"stdout\":\"data only (JSON)\",\"stderr\":\"context only\",\"commands\":["
     h = h + "{\"name\":\"serve\",\"usage\":\"vigie serve [--port 8090] [--db vigie.db]\",\"summary\":\"run the ingest+snippet HTTP server\"},"
     h = h + "{\"name\":\"site\",\"usage\":\"vigie site add <domain> | site list | site key --site d | site rotate-key --site d\",\"summary\":\"register/list tracked sites; key/rotate-key manage the per-site READ key (grants /api/stats/live + /globe only)\"},"
-    h = h + "{\"name\":\"stats\",\"usage\":\"vigie stats <overview|timeseries|live|goals|retention|vitals|errors|journeys|channels|pages|referrers|countries|regions|cities|devices|browsers|browser-versions|os|screens|languages|events|utm-sources|utm-mediums|utm-campaigns> --site <domain> [--since 7d|24h|4w] [--limit 10] [--bucket day|hour] [--weeks 8] [--path P] [--country C] [--device D] [--browser B] [--ref R] [--utm-source S]\",\"summary\":\"query analytics as JSON (live = last-5-min realtime; retention = weekly cohorts over identified uids; vitals = LCP/FCP/CLS/INP/TTFB p50/p75/p90; errors = grouped JS errors)\"},"
+    h = h + "{\"name\":\"stats\",\"usage\":\"vigie stats <overview|timeseries|live|goals|retention|vitals|errors|journeys|channels|heatmap|event-props|pages|entry-pages|exit-pages|referrers|countries|regions|cities|devices|browsers|browser-versions|os|screens|languages|events|utm-sources|utm-mediums|utm-campaigns> --site <domain> [--since 7d|24h|4w] [--limit 10] [--bucket day|hour] [--weeks 8] [--path P] [--country C] [--device D] [--browser B] [--ref R] [--utm-source S]\",\"summary\":\"query analytics as JSON (live = last-5-min realtime; retention = weekly cohorts over identified uids; vitals = LCP/FCP/CLS/INP/TTFB p50/p75/p90; errors = grouped JS errors)\"},"
     h = h + "{\"name\":\"globe\",\"usage\":\"vigie globe --site <domain> [--base https://host]\",\"summary\":\"print the ready-to-open war-room URL (live globe, per-site read key); base from --base or VIGIE_BASE_URL\"},"
     h = h + "{\"name\":\"users\",\"usage\":\"vigie users list --site s [--since 30d] [--limit 20] | users show --site s --uid <id>\",\"summary\":\"identified-user profiles: first/last seen, sessions, per-user session history\"},"
     h = h + "{\"name\":\"sessions\",\"usage\":\"vigie sessions list --site s [--since 24h] [--limit 20] | sessions show --site s --sid <id>\",\"summary\":\"session explorer: per-session rollups (entry/exit/duration/errors) + the full ordered event trail\"},"
