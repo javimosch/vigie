@@ -4,7 +4,7 @@
 
 // ---------- constants ----------
 
-func vigie_version() (v) { v = "0.8.1" }
+func vigie_version() (v) { v = "0.8.2" }
 func session_window() (s) { s = 1800 }
 
 // ---------- CLI arg helpers ----------
@@ -512,18 +512,62 @@ func llms_txt() (s) {
 }
 
 func landing_html() (h) {
-    h = "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>vigie — agent-first analytics</title><style>"
-    h = h + "body{font-family:system-ui,sans-serif;background:#0d1117;color:#e6edf3;margin:0;display:flex;min-height:100vh;align-items:center;justify-content:center}"
-    h = h + ".card{max-width:560px;padding:40px 28px}h1{font-size:34px;margin:0}h1 span{color:#4f9cf9}"
-    h = h + "p{color:#8b949e;line-height:1.6}code,pre{background:#161b22;border:1px solid #30363d;border-radius:6px;font-family:ui-monospace,monospace;font-size:13px}"
-    h = h + "pre{padding:12px 14px;overflow-x:auto}code{padding:1px 5px}"
-    h = h + "a{color:#4f9cf9;text-decoration:none}.links{display:flex;gap:16px;flex-wrap:wrap;margin-top:18px;font-size:14px}"
-    h = h + "</style></head><body><div class='card'>"
-    h = h + "<h1>vigie<span>.</span></h1>"
-    h = h + "<p>Agent-first, cookieless web analytics. There is no dashboard here — this host ingests events and answers JSON. Humans: see the <a href='https://javimosch.github.io/vigie/'>docs</a>. Agents: fetch <a href='/llms.txt'>/llms.txt</a>.</p>"
-    h = h + "<pre>&lt;script defer src=\"https://vigie.intrane.fr/vigie.js\" data-site=\"your-domain\"&gt;&lt;/script&gt;</pre>"
-    h = h + "<p>Then <code>curl -H 'Authorization: Bearer …' /api/stats/overview?site=your-domain</code> — or run the <a href='https://github.com/javimosch/vigie/releases/latest/download/vigie'>binary</a> yourself.</p>"
-    h = h + "<div class='links'><a href='https://github.com/javimosch/vigie'>GitHub</a><a href='https://javimosch.github.io/vigie/'>Docs</a><a href='https://javimosch.github.io/vigie/changelog.html'>Changelog</a><a href='https://hart.intrane.fr/a/vigie/intrane-globe'>Live globe</a><a href='/_health'>Health</a></div>"
+    h = "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>vigie — agent-first, cookieless web analytics</title><meta name='description' content='Web analytics with no dashboard app: JSON verbs for agents, live views and a 3D globe for humans. One MIT binary; hosted tier metered per-use.'><style>"
+    h = h + ":root{--bg:#0d1117;--panel:#161b22;--border:#30363d;--fg:#e6edf3;--muted:#8b949e;--accent:#4f9cf9;--green:#3fb950}"
+    h = h + "*{box-sizing:border-box}body{font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--fg);margin:0;line-height:1.6}"
+    h = h + ".wrap{max-width:900px;margin:0 auto;padding:0 20px}header{padding:56px 0 32px;text-align:center}"
+    h = h + "h1{font-size:44px;margin:0 0 8px;letter-spacing:-.02em}h1 .dot{color:var(--accent)}"
+    h = h + ".tag{color:var(--muted);font-size:19px;max-width:640px;margin:0 auto}"
+    h = h + ".btns{margin:26px 0 0;display:flex;gap:10px;justify-content:center;flex-wrap:wrap}"
+    h = h + ".btn{display:inline-block;padding:9px 18px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px}"
+    h = h + ".btn.primary{background:var(--accent);color:#04101f}.btn.ghost{border:1px solid var(--border);color:var(--fg)}"
+    h = h + "pre{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px 16px;overflow-x:auto;font-size:13px;line-height:1.55}"
+    h = h + "code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}p code,li code,td code{background:var(--panel);border:1px solid var(--border);border-radius:4px;padding:1px 5px;font-size:.9em}"
+    h = h + ".grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px;margin:22px 0}"
+    h = h + ".card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:16px}"
+    h = h + ".card h3{margin:0 0 6px;font-size:15px}.card p{margin:0;color:var(--muted);font-size:13.5px}"
+    h = h + "h2{font-size:22px;margin:44px 0 10px}.muted{color:var(--muted)}a{color:var(--accent)}"
+    h = h + ".metrics{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0}.metrics span{background:var(--panel);border:1px solid var(--border);border-radius:99px;padding:4px 12px;font-size:12.5px;color:var(--muted)}"
+    h = h + ".price{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}.price .card b{font-size:26px;color:var(--fg)}"
+    h = h + ".comment{color:var(--muted)}.k{color:var(--accent)}.g{color:var(--green)}"
+    h = h + "footer{margin:56px 0 36px;color:var(--muted);font-size:12.5px;text-align:center;border-top:1px solid var(--border);padding-top:22px}"
+    h = h + "</style></head><body><div class='wrap'>"
+
+    h = h + "<header><h1>vigie<span class='dot'>.</span></h1>"
+    h = h + "<p class='tag'>Agent-first, cookieless web analytics. <b>No dashboard app</b> — JSON verbs for agents, live server-rendered views and a rotating 3D globe for humans.</p>"
+    h = h + "<div class='btns'><a class='btn primary' href='https://hart.intrane.fr/a/vigie/report-demo'>See a full report (demo)</a><a class='btn primary' href='https://hart.intrane.fr/a/vigie/globe-demo'>See the globe (demo)</a><a class='btn ghost' href='https://github.com/javimosch/vigie'>GitHub (MIT)</a><a class='btn ghost' href='/llms.txt'>llms.txt</a><a class='btn ghost' href='https://javimosch.github.io/vigie/'>Docs</a></div></header>"
+
+    h = h + "<pre><code><span class='comment'># an agent onboards itself on this instance — no forms, no humans:</span>\n"
+    h = h + "curl -X POST https://vigie.intrane.fr/v1/signup -d '{\"email\":\"you@x.com\",\"org\":\"my-org\"}'\n"
+    h = h + "<span class='g'>{\"ok\":true,\"token\":\"vo_...\",\"free_events_per_month\":10000,\"next\":[...]}</span>\n"
+    h = h + "curl -X POST -H 'Authorization: Bearer vo_...' 'https://vigie.intrane.fr/api/sites?domain=my-site.com'\n"
+    h = h + "<span class='comment'>&lt;script defer src='https://vigie.intrane.fr/vigie.js' data-site='my-site.com'&gt;&lt;/script&gt;</span>\n"
+    h = h + "curl -H 'Authorization: Bearer vo_...' 'https://vigie.intrane.fr/api/stats/overview?site=my-site.com&since=7d'\n"
+    h = h + "<span class='g'>{\"ok\":true,\"data\":{\"pageviews\":1234,\"visitors\":410,\"bounce_rate_pct\":38,...}}</span></code></pre>"
+
+    h = h + "<h2>Everything the dashboard tools measure — as JSON</h2>"
+    h = h + "<div class='metrics'><span>pageviews</span><span>visitors</span><span>sessions</span><span>bounce</span><span>duration</span><span>realtime (5m)</span><span>entry/exit pages</span><span>referrers</span><span>channels</span><span>UTM</span><span>countries</span><span>regions</span><span>cities + coordinates</span><span>devices</span><span>browsers + versions</span><span>OS</span><span>screens</span><span>languages</span><span>custom events + props</span><span>goals</span><span>funnels</span><span>user journeys</span><span>retention cohorts</span><span>user profiles</span><span>web vitals p50/75/90</span><span>JS errors</span><span>weekday×hour heatmap</span><span>server-side agent events</span></div>"
+
+    h = h + "<div class='grid'>"
+    h = h + "<div class='card'><h3>Built for agents</h3><p>JSON-only stdout, semantic exit codes, embedded <code>guide</code>, <code>help-json</code>, self-describing errors — the <a href='https://cli-specs.intrane.fr/'>agent-first CLI specs</a>, end to end. Even signup and payment are curl calls.</p></div>"
+    h = h + "<div class='card'><h3>Cookieless by construction</h3><p>Visitor = <code>sha256(secret+day+site+ip+ua)</code> — daily salt rotation, raw IP never stored. No consent banner needed.</p></div>"
+    h = h + "<div class='card'><h3>Three human views, zero apps</h3><p><code>/report</code> — the full 22-section dashboard rendered live per request. hart snapshots — shareable, versioned, auto-republished. <code>/globe</code> — the realtime world map. All stateless, all key-gated, all served by this binary.</p></div>"
+    h = h + "<div class='card'><h3>Geo to the city</h3><p>Country/region/city with real coordinates via a MaxMind-DB reader written in pure MFL over <a href='https://db-ip.com/db/download/ip-to-city-lite'>DB-IP City Lite</a> (CC BY). City dots light up the globe.</p></div>"
+    h = h + "<div class='card'><h3>Agents are users too</h3><p><code>vigie track --name deploy --actor ci</code> — server-side events, no browser. Your cron job is a first-class analytics stream with sessions and funnels.</p></div>"
+    h = h + "<div class='card'><h3>Vitals &amp; errors, auto-collected</h3><p>The ~2&nbsp;KB snippet ships LCP/FCP/CLS/INP/TTFB percentiles and grouped JS errors — nothing to configure. SPA-aware, custom events, <code>identify()</code>.</p></div>"
+    h = h + "<div class='card'><h3>One binary, self-hostable</h3><p>~300&nbsp;KB native binary (<a href='https://github.com/javimosch/machin'>MFL</a>): HTTP ingest, SQLite, stats engine, globe renderer, CLI. No Node, no ClickHouse, no Docker. MIT, feature-complete.</p></div>"
+    h = h + "<div class='card'><h3>Pay-per-use, agent-payable</h3><p>Over quota, ingest answers a machine-readable <b>HTTP 402</b> naming the rail, price, and the exact call to make. Agents link a prepaid <a href='https://peage.intrane.fr'>péage</a> wallet and pay for themselves — <a href='https://blog.intrane.fr/the-agent-that-signed-up-and-paid'>proven live</a>.</p></div>"
+    h = h + "<div class='card'><h3>Recoverable, revocable</h3><p>Per-site read keys for the views (rotate in one call), org token recovery by org name or signup email, quota preflight at <code>/v1/org/quota</code>.</p></div>"
+    h = h + "</div>"
+
+    h = h + "<h2>Pricing</h2><div class='price'>"
+    h = h + "<div class='card'><h3>Self-host</h3><b>Free forever</b><p>MIT. One binary, your domain, every feature. <a href='https://github.com/javimosch/vigie/releases/latest/download/vigie'>Download</a> · <code>vigie guide</code></p></div>"
+    h = h + "<div class='card'><h3>Hosted (this instance)</h3><b>10k events/mo free</b><p>then <b>€1 per 100k events</b>, charged to a prepaid péage wallet. No subscription, no card on file. Signup is one POST — see <a href='/llms.txt'>/llms.txt</a>.</p></div>"
+    h = h + "</div>"
+
+    h = h + "<h2>Read more</h2><p><a href='https://blog.intrane.fr/analytics-with-no-dashboard'>Web Analytics With No Dashboard (But There Is a Globe)</a> — why vigie exists · <a href='https://blog.intrane.fr/the-agent-that-signed-up-and-paid'>The Agent That Signed Up and Paid for Its Own Analytics</a> — the autonomous x402 loop, live transcript.</p>"
+
+    h = h + "<footer>MIT · clean-room · built in <a href='https://github.com/javimosch/machin'>MFL</a> · IP geolocation by <a href='https://db-ip.com'>DB-IP</a> · part of the agent-web stack: <a href='https://peage.intrane.fr'>péage</a> pays, <a href='https://relais.intrane.fr'>relais</a> receives, <a href='https://sso.intrane.fr'>portier</a> authenticates — <b>vigie watches</b> · <a href='/_health'>health</a> · <a href='https://status.dev.intrane.fr/g/vigie'>status</a></footer>"
     h = h + "</div></body></html>"
 }
 
