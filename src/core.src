@@ -4,7 +4,7 @@
 
 // ---------- constants ----------
 
-func vigie_version() (v) { v = "0.6.0" }
+func vigie_version() (v) { v = "0.7.0" }
 func session_window() (s) { s = 1800 }
 
 // ---------- CLI arg helpers ----------
@@ -84,6 +84,12 @@ func db_init(db) {
     has_bv := q_count(db, "SELECT COUNT(*) AS n FROM pragma_table_info('events') WHERE name = 'bv'", []string{})
     if has_bv == 0 {
         sqlite_exec(db, "ALTER TABLE events ADD COLUMN bv TEXT DEFAULT ''")
+    }
+    has_region := q_count(db, "SELECT COUNT(*) AS n FROM pragma_table_info('events') WHERE name = 'region'", []string{})
+    if has_region == 0 {
+        sqlite_exec(db, "ALTER TABLE events ADD COLUMN region TEXT DEFAULT ''")
+        sqlite_exec(db, "ALTER TABLE events ADD COLUMN city TEXT DEFAULT ''")
+        sqlite_exec(db, "ALTER TABLE events ADD COLUMN loc TEXT DEFAULT ''")
     }
     sqlite_exec(db, "CREATE TABLE IF NOT EXISTS goals (id INTEGER PRIMARY KEY AUTOINCREMENT, site TEXT, name TEXT, kind TEXT, matcher TEXT, UNIQUE(site, name))")
     sqlite_exec(db, "CREATE TABLE IF NOT EXISTS funnels (id INTEGER PRIMARY KEY AUTOINCREMENT, site TEXT, name TEXT, steps TEXT, UNIQUE(site, name))")
@@ -215,8 +221,8 @@ func session_for(db, site, vid) (sid) {
     if sid == "" { sid = to_hex(rand_bytes(8)) }
 }
 
-func insert_event(db, ts, site, vid, sid, kind, name, path, ref, utm_s, utm_m, utm_c, country, device, browser, props, uid, numv, osname, scr, lang, bv) {
-    sqlite_exec(db, "INSERT INTO events (ts, site, vid, sid, kind, name, path, ref, utm_source, utm_medium, utm_campaign, country, device, browser, props, uid, num, os, scr, lang, bv) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", []string{str(ts), site, vid, sid, kind, name, path, ref, utm_s, utm_m, utm_c, country, device, browser, props, uid, numv, osname, scr, lang, bv})
+func insert_event(db, ts, site, vid, sid, kind, name, path, ref, utm_s, utm_m, utm_c, country, device, browser, props, uid, numv, osname, scr, lang, bv, region, city, loc) {
+    sqlite_exec(db, "INSERT INTO events (ts, site, vid, sid, kind, name, path, ref, utm_source, utm_medium, utm_campaign, country, device, browser, props, uid, num, os, scr, lang, bv, region, city, loc) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", []string{str(ts), site, vid, sid, kind, name, path, ref, utm_s, utm_m, utm_c, country, device, browser, props, uid, numv, osname, scr, lang, bv, region, city, loc})
 }
 
 // ---------- HTTP handlers ----------
@@ -247,7 +253,9 @@ func handle_event(req) (res) {
     vid := visitor_id(secret, ev.site, ip, ua)
     sid := session_for(db, ev.site, vid)
     country := header(req, "cf-ipcountry")
-    insert_event(db, now(), ev.site, vid, sid, kind, ev.name, ev.path, clean_ref(ev.ref, ev.site), qparam(ev.q, "utm_source"), qparam(ev.q, "utm_medium"), qparam(ev.q, "utm_campaign"), country, ua_device(ua), ua_browser(ua), ev.props, ev.uid, numv, ua_os(ua), ev.scr, ev.lang, ua_bv(ua))
+    g_cc, g_region, g_city, g_loc := geo_lookup(ip)
+    if country == "" { country = g_cc }
+    insert_event(db, now(), ev.site, vid, sid, kind, ev.name, ev.path, clean_ref(ev.ref, ev.site), qparam(ev.q, "utm_source"), qparam(ev.q, "utm_medium"), qparam(ev.q, "utm_campaign"), country, ua_device(ua), ua_browser(ua), ev.props, ev.uid, numv, ua_os(ua), ev.scr, ev.lang, ua_bv(ua), g_region, g_city, g_loc)
     sqlite_close(db)
     res = ok_json("{\"ok\":true}")
 }
@@ -509,8 +517,17 @@ func overview_json(db, site, since, fw, fpx) (j) {
 
 // ---------- CLI verbs ----------
 
+// serve_common: startup shared by editions. VIGIE_TRUST_PROXY=1 makes client_ip honor
+// X-Forwarded-For (set it when behind Traefik/Cloudflare — REQUIRED for correct visitor
+// hashing and geo there; without it every proxied visitor shares the proxy's IP).
+func serve_common() {
+    if env("VIGIE_TRUST_PROXY") == "1" { set_trust_proxy(1) }
+    geo_init()
+}
+
 func cmd_serve() {
     port := parse_int(argval("--port", "8090"))
+    serve_common()
     db := db_open()
     db_init(db)
     sqlite_close(db)
@@ -599,6 +616,8 @@ func breakdown_json(db, dim, site, since, limitn, fw, fpx) (j) {
     if dim == "screens" { col = "scr"  cond = " AND scr != ''" }
     if dim == "languages" { col = "lang"  cond = " AND lang != ''" }
     if dim == "browser-versions" { col = "browser || ' ' || bv"  cond = " AND bv != ''" }
+    if dim == "regions" { col = "country || ' / ' || region"  cond = " AND region != ''" }
+    if dim == "cities" { col = "country || ' / ' || city"  cond = " AND city != ''" }
     if dim == "channels" {
         col = "CASE WHEN utm_medium IN ('cpc','ppc','paid','ads','display') THEN 'paid' WHEN ref = '' AND utm_source = '' THEN 'direct' WHEN ref LIKE '%google.%' OR ref LIKE '%bing.com%' OR ref LIKE '%duckduckgo%' OR ref LIKE '%search.brave%' OR ref LIKE '%yandex.%' OR ref LIKE '%baidu.%' OR ref LIKE '%ecosia.%' THEN 'organic' WHEN ref LIKE '%twitter.com%' OR ref LIKE '%x.com%' OR ref = 't.co' OR ref LIKE '%facebook.com%' OR ref LIKE '%linkedin.com%' OR ref = 'lnkd.in' OR ref LIKE '%instagram.com%' OR ref LIKE '%reddit.com%' OR ref LIKE '%news.ycombinator.com%' OR ref LIKE '%mastodon%' OR ref LIKE '%bsky.app%' THEN 'social' WHEN utm_source != '' THEN 'campaign' ELSE 'referral' END"
         cond = " AND kind = 'pageview'"
@@ -1028,7 +1047,9 @@ func live_json(db, site) (j) {
     latest := sqlite_query(db, "SELECT ts, kind, name, path, country FROM events WHERE site = ? AND ts > ? ORDER BY ts DESC LIMIT 10", p)
     day_ago := str(now() - 86400)
     countries24 := sqlite_query(db, "SELECT country AS value, COUNT(DISTINCT vid) AS visitors FROM events WHERE site = ? AND ts > ? AND country != '' GROUP BY country ORDER BY visitors DESC", []string{site, day_ago})
-    j = "{\"site\":\"" + site + "\",\"window_secs\":300,\"active_visitors\":" + str(actives) + ",\"pageviews\":" + str(pv) + ",\"pages\":" + pages + ",\"countries\":" + countries + ",\"countries_24h\":" + countries24 + ",\"latest\":" + latest + ",\"generated\":" + str(now()) + "}"
+    cities5 := sqlite_query(db, "SELECT loc AS value, MIN(city) AS city, COUNT(DISTINCT vid) AS visitors FROM events WHERE site = ? AND ts > ? AND loc != '' GROUP BY loc ORDER BY visitors DESC LIMIT 50", p)
+    cities24 := sqlite_query(db, "SELECT loc AS value, MIN(city) AS city, COUNT(DISTINCT vid) AS visitors FROM events WHERE site = ? AND ts > ? AND loc != '' GROUP BY loc ORDER BY visitors DESC LIMIT 200", []string{site, day_ago})
+    j = "{\"site\":\"" + site + "\",\"window_secs\":300,\"active_visitors\":" + str(actives) + ",\"pageviews\":" + str(pv) + ",\"pages\":" + pages + ",\"countries\":" + countries + ",\"countries_24h\":" + countries24 + ",\"cities\":" + cities5 + ",\"cities_24h\":" + cities24 + ",\"latest\":" + latest + ",\"generated\":" + str(now()) + "}"
 }
 
 // ---------- funnels ----------
@@ -1242,7 +1263,7 @@ func cmd_guide() {
     g = g + "\"model\":{\"what\":\"POST /api/event ingests pageviews/custom events (browser snippet or server-side). Visitors are a daily-rotating salted hash of IP+UA — no cookies, no consent banner, raw IP never stored. Sessions stitch events within a 30-min window. Everything is queried via `vigie stats *` returning JSON on stdout.\",\"storage\":\"SQLite (WAL), one file, indexes on (site,ts) and (site,vid,ts). Prune with `vigie prune`.\",\"server_side\":\"agents/backends are first-class tracked users: `vigie track --site s --name deploy --actor ci` or POST /api/event with no browser.\"},"
     g = g + "\"quickstart\":[\"vigie site add example.com\",\"vigie serve --port 8090 --db vigie.db\",\"add <script defer src=\\\"https://your-host/vigie.js\\\" data-site=\\\"example.com\\\"></script> to your pages\",\"vigie stats overview --site example.com --since 7d\"],"
     g = g + "\"concepts\":{\"visitor\":\"sha256(secret+day+site+ip+ua)[0:16], rotates daily — privacy by construction\",\"session\":\"reuse the visitor's last session id if their last event is <30min old\",\"bounce\":\"sessions with exactly one pageview / all sessions with pageviews\",\"country\":\"read from the CF-IPCountry header (free behind Cloudflare); empty otherwise\",\"filters\":\"every stats verb accepts --path --country --device --browser --ref --utm-source\"},"
-    g = g + "\"http\":{\"POST /api/event\":\"{site,t:pageview|event,name,path,ref,q,props} — 404 for unregistered sites; always open\",\"GET /vigie.js\":\"the <1KB tracking snippet (auto SPA pushState tracking, window.vigie(name,props) for custom events); always open\",\"GET /_health\":\"liveness + version; open\",\"GET /api/stats/<dim>\":\"remote stats API: dim = overview|timeseries|live|goals|retention|vitals|errors|journeys|channels|pages|referrers|countries|devices|browsers|browser-versions|os|screens|languages|events|utm-sources|utm-mediums|utm-campaigns; params site, since, limit, bucket + filters path/country/device/browser/ref/utm_source. Gated by VIGIE_ADMIN_TOKEN (Bearer) when set\",\"GET /api/snapshot\":\"the HTML dashboard for ?site=&since= (gated)\",\"GET /globe\":\"the war-room: a live globe page polling its own live feed every 5s; ?site=&key=<per-site read key> (or admin Bearer). The read key grants live aggregates only — get it via `vigie site key`, revoke via `site rotate-key`\",\"POST /api/sites?domain=\":\"register a site remotely (gated)\"},"
+    g = g + "\"http\":{\"POST /api/event\":\"{site,t:pageview|event,name,path,ref,q,props} — 404 for unregistered sites; always open\",\"GET /vigie.js\":\"the <1KB tracking snippet (auto SPA pushState tracking, window.vigie(name,props) for custom events); always open\",\"GET /_health\":\"liveness + version; open\",\"GET /api/stats/<dim>\":\"remote stats API: dim = overview|timeseries|live|goals|retention|vitals|errors|journeys|channels|pages|referrers|countries|regions|cities|devices|browsers|browser-versions|os|screens|languages|events|utm-sources|utm-mediums|utm-campaigns; params site, since, limit, bucket + filters path/country/device/browser/ref/utm_source. Gated by VIGIE_ADMIN_TOKEN (Bearer) when set\",\"GET /api/snapshot\":\"the HTML dashboard for ?site=&since= (gated)\",\"GET /globe\":\"the war-room: a live globe page polling its own live feed every 5s; ?site=&key=<per-site read key> (or admin Bearer). The read key grants live aggregates only — get it via `vigie site key`, revoke via `site rotate-key`\",\"POST /api/sites?domain=\":\"register a site remotely (gated)\"},"
     g = g + "\"snapshots\":\"there is no dashboard. `vigie snapshot --site s --publish` renders a self-contained dark-mode HTML report and POSTs it to a hart instance (VIGIE_HART_URL, default https://hart.intrane.fr) -> a live shareable URL. Goals: `vigie goal add` then `vigie stats goals`. Funnels: `vigie funnel add --steps '/,signup,/done'` then `vigie funnel show` (ordered per-session progression).\","
     g = g + "\"realtime_and_globe\":\"`vigie stats live` = last-5-min feed (also GET /api/stats/live; add &raw=1 for the bare object — that is what hart refresh should pull). `vigie snapshot --globe --publish --live` publishes a rotating world-map artifact to hart; wire `hart refresh <id> --url .../api/stats/live?site=S&raw=1 --every 60s --header 'authorization: Bearer TOKEN'` and it repaints itself while watched.\","
     g = g + "\"sessions_retention_vitals_errors\":\"`vigie sessions list/show` = per-session rollups + ordered event trail. Retention cohorts need IDENTIFIED users: the daily-rotating visitor hash cannot follow a person across days (privacy by design), so call window.vigie.identify('user-id') in the browser or pass --uid/--actor on `vigie track`; `vigie stats retention` then computes weekly cohorts over uid. The snippet auto-collects web vitals (LCP/FCP/CLS/INP/TTFB, sent on pagehide; CLS is scaled x1000) -> `vigie stats vitals` (p50/p75/p90), and auto-captures JS errors + unhandled rejections (max 5/page) -> `vigie stats errors` (grouped by message).\","
@@ -1256,7 +1277,7 @@ func cmd_help_json() {
     h := "{\"schema\":\"vigie.help/v1\",\"version\":\"" + v + "\",\"stdout\":\"data only (JSON)\",\"stderr\":\"context only\",\"commands\":["
     h = h + "{\"name\":\"serve\",\"usage\":\"vigie serve [--port 8090] [--db vigie.db]\",\"summary\":\"run the ingest+snippet HTTP server\"},"
     h = h + "{\"name\":\"site\",\"usage\":\"vigie site add <domain> | site list | site key --site d | site rotate-key --site d\",\"summary\":\"register/list tracked sites; key/rotate-key manage the per-site READ key (grants /api/stats/live + /globe only)\"},"
-    h = h + "{\"name\":\"stats\",\"usage\":\"vigie stats <overview|timeseries|live|goals|retention|vitals|errors|journeys|channels|pages|referrers|countries|devices|browsers|browser-versions|os|screens|languages|events|utm-sources|utm-mediums|utm-campaigns> --site <domain> [--since 7d|24h|4w] [--limit 10] [--bucket day|hour] [--weeks 8] [--path P] [--country C] [--device D] [--browser B] [--ref R] [--utm-source S]\",\"summary\":\"query analytics as JSON (live = last-5-min realtime; retention = weekly cohorts over identified uids; vitals = LCP/FCP/CLS/INP/TTFB p50/p75/p90; errors = grouped JS errors)\"},"
+    h = h + "{\"name\":\"stats\",\"usage\":\"vigie stats <overview|timeseries|live|goals|retention|vitals|errors|journeys|channels|pages|referrers|countries|regions|cities|devices|browsers|browser-versions|os|screens|languages|events|utm-sources|utm-mediums|utm-campaigns> --site <domain> [--since 7d|24h|4w] [--limit 10] [--bucket day|hour] [--weeks 8] [--path P] [--country C] [--device D] [--browser B] [--ref R] [--utm-source S]\",\"summary\":\"query analytics as JSON (live = last-5-min realtime; retention = weekly cohorts over identified uids; vitals = LCP/FCP/CLS/INP/TTFB p50/p75/p90; errors = grouped JS errors)\"},"
     h = h + "{\"name\":\"globe\",\"usage\":\"vigie globe --site <domain> [--base https://host]\",\"summary\":\"print the ready-to-open war-room URL (live globe, per-site read key); base from --base or VIGIE_BASE_URL\"},"
     h = h + "{\"name\":\"users\",\"usage\":\"vigie users list --site s [--since 30d] [--limit 20] | users show --site s --uid <id>\",\"summary\":\"identified-user profiles: first/last seen, sessions, per-user session history\"},"
     h = h + "{\"name\":\"sessions\",\"usage\":\"vigie sessions list --site s [--since 24h] [--limit 20] | sessions show --site s --sid <id>\",\"summary\":\"session explorer: per-session rollups (entry/exit/duration/errors) + the full ordered event trail\"},"
@@ -1375,7 +1396,7 @@ func cmd_track() {
     actor := argval("--actor", "server")
     vid := visitor_id(secret, site, actor, "server-side")
     sid := session_for(db, site, vid)
-    insert_event(db, now(), site, vid, sid, "event", name, argval("--path", ""), "", "", "", "", "", "server", "server", argval("--props", ""), argval("--uid", actor), "0", "server", "", "", "")
+    insert_event(db, now(), site, vid, sid, "event", name, argval("--path", ""), "", "", "", "", "", "server", "server", argval("--props", ""), argval("--uid", actor), "0", "server", "", "", "", "", "", "")
     sqlite_close(db)
     emit("{\"tracked\":\"" + name + "\",\"site\":\"" + site + "\"}")
 }

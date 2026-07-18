@@ -1,0 +1,324 @@
+// geoip — a pure-MFL MaxMind-DB (.mmdb) reader for geo depth: country/region/city/lat,lon.
+// Works with any GeoLite2-City-schema database; we recommend DB-IP City Lite (CC BY 4.0,
+// no account needed): https://download.db-ip.com/free/  — set VIGIE_GEOIP_DB=/path/db.mmdb.
+// The database is loaded ONCE at serve startup into read-only globals (reads-only sharing
+// across request goroutines is race-free); no geo db = every lookup returns empties.
+
+var GEO_DB = bytes("")
+var GEO_NODES = 0
+var GEO_RS = 0
+var GEO_TREE = 0
+var GEO_V6 = 0
+var GEO_ON = 0
+
+// ---------- data-section decoding (MMDB spec 2.0) ----------
+
+// control byte at pos -> (dtype, dsize, payload_pos)
+func mm_ctl(pos) (dtype, dsize, npos) {
+    b := byte_at(GEO_DB, pos)
+    dtype = b >> 5
+    npos = pos + 1
+    if dtype == 0 {
+        dtype = byte_at(GEO_DB, npos) + 7
+        npos = npos + 1
+    }
+    dsize = b & 31
+    if dtype != 1 {
+        if dsize == 29 {
+            dsize = 29 + byte_at(GEO_DB, npos)
+            npos = npos + 1
+        } else {
+            if dsize == 30 {
+                dsize = 285 + (byte_at(GEO_DB, npos) << 8) + byte_at(GEO_DB, npos+1)
+                npos = npos + 2
+            } else {
+                if dsize == 31 {
+                    dsize = 65821 + (byte_at(GEO_DB, npos) << 16) + (byte_at(GEO_DB, npos+1) << 8) + byte_at(GEO_DB, npos+2)
+                    npos = npos + 3
+                }
+            }
+        }
+    }
+}
+
+// pointer at pos -> (target_pos_in_file, pos_after_pointer)
+func mm_ptr(pos) (tgt, npos) {
+    b := byte_at(GEO_DB, pos)
+    ss := (b >> 3) & 3
+    v := b & 7
+    if ss == 0 {
+        tgt = (v << 8) + byte_at(GEO_DB, pos+1)
+        npos = pos + 2
+    }
+    if ss == 1 {
+        tgt = 2048 + (v << 16) + (byte_at(GEO_DB, pos+1) << 8) + byte_at(GEO_DB, pos+2)
+        npos = pos + 3
+    }
+    if ss == 2 {
+        tgt = 526336 + (v << 24) + (byte_at(GEO_DB, pos+1) << 16) + (byte_at(GEO_DB, pos+2) << 8) + byte_at(GEO_DB, pos+3)
+        npos = pos + 4
+    }
+    if ss == 3 {
+        tgt = (byte_at(GEO_DB, pos+1) << 24) + (byte_at(GEO_DB, pos+2) << 16) + (byte_at(GEO_DB, pos+3) << 8) + byte_at(GEO_DB, pos+4)
+        npos = pos + 5
+    }
+    tgt = tgt + GEO_TREE + 16
+}
+
+// resolve a value position: follow pointer chains to the actual value
+func mm_at(pos) (rpos) {
+    rpos = pos
+    b := byte_at(GEO_DB, rpos)
+    while b >> 5 == 1 {
+        t, _ := mm_ptr(rpos)
+        rpos = t
+        b = byte_at(GEO_DB, rpos)
+    }
+}
+
+// skip one value (used to walk maps/arrays); pos is unresolved
+func mm_skip(pos) (npos) {
+    b := byte_at(GEO_DB, pos)
+    if b >> 5 == 1 {
+        _, npos = mm_ptr(pos)
+        return npos
+    }
+    dtype, dsize, pp := mm_ctl(pos)
+    if dtype == 7 {
+        npos = pp
+        i := 0
+        while i < dsize {
+            npos = mm_skip(npos)
+            npos = mm_skip(npos)
+            i = i + 1
+        }
+        return npos
+    }
+    if dtype == 11 {
+        npos = pp
+        i := 0
+        while i < dsize {
+            npos = mm_skip(npos)
+            i = i + 1
+        }
+        return npos
+    }
+    if dtype == 14 { return pp }
+    npos = pp + dsize
+}
+
+// find key in the map at pos -> (value_pos, found)
+func mm_find(pos, want) (vpos, found) {
+    vpos = 0
+    found = 0
+    rp := mm_at(pos)
+    dtype, dsize, pp := mm_ctl(rp)
+    if dtype != 7 { return vpos, found }
+    i := 0
+    cur := pp
+    while i < dsize {
+        krp := mm_at(cur)
+        kt, ks, kp := mm_ctl(krp)
+        kname := ""
+        if kt == 2 { kname = bytes_str(bytes_sub(GEO_DB, kp, kp+ks)) }
+        cur = mm_skip(cur)
+        if kname == want {
+            vpos = cur
+            found = 1
+            return vpos, found
+        }
+        cur = mm_skip(cur)
+        i = i + 1
+    }
+}
+
+// array at pos -> position of element 0 (unresolved), ok
+func mm_first(pos) (vpos, found) {
+    vpos = 0
+    found = 0
+    rp := mm_at(pos)
+    dtype, dsize, pp := mm_ctl(rp)
+    if dtype != 11 { return vpos, found }
+    if dsize < 1 { return vpos, found }
+    vpos = pp
+    found = 1
+}
+
+func mm_str(pos) (s) {
+    s = ""
+    rp := mm_at(pos)
+    dtype, dsize, pp := mm_ctl(rp)
+    if dtype == 2 { s = bytes_str(bytes_sub(GEO_DB, pp, pp+dsize)) }
+}
+
+func mm_uint(pos) (v) {
+    v = 0
+    rp := mm_at(pos)
+    dtype, dsize, pp := mm_ctl(rp)
+    if dtype == 5 || dtype == 6 || dtype == 9 {
+        i := 0
+        while i < dsize {
+            v = (v << 8) + byte_at(GEO_DB, pp+i)
+            i = i + 1
+        }
+    }
+}
+
+func mm_double(pos) (f) {
+    f = 0.0
+    rp := mm_at(pos)
+    dtype, dsize, pp := mm_ctl(rp)
+    if dtype == 3 {
+        if dsize == 8 {
+            hi := 0
+            i := 0
+            while i < 8 {
+                hi = (hi << 8) + byte_at(GEO_DB, pp+i)
+                i = i + 1
+            }
+            f = f64_from_bits(hi)
+        }
+    }
+}
+
+// nested map path helpers
+func mm_path2(pos, k1, k2) (s) {
+    s = ""
+    v1, ok1 := mm_find(pos, k1)
+    if ok1 == 0 { return s }
+    v2, ok2 := mm_find(v1, k2)
+    if ok2 == 0 { return s }
+    s = mm_str(v2)
+}
+
+// ---------- metadata + tree walk ----------
+
+// locate metadata (marker \xab\xcd\xefMaxMind.com scanned from the end) and read the fields
+func geo_init() {
+    path := env("VIGIE_GEOIP_DB")
+    if path == "" { return }
+    GEO_DB = read_file_bytes(path)
+    n := len(GEO_DB)
+    if n < 2000 {
+        write(2, "{\"geoip\":\"unreadable or too small: " + path + "\"}\n")
+        return
+    }
+    // scan the last 128KB for the LAST marker occurrence
+    lo := n - 131072
+    if lo < 0 { lo = 0 }
+    mpos := -1
+    i := n - 14
+    while i >= lo {
+        if byte_at(GEO_DB, i) == 171 {
+            if byte_at(GEO_DB, i+1) == 205 {
+                if byte_at(GEO_DB, i+2) == 239 {
+                    if bytes_str(bytes_sub(GEO_DB, i+3, i+14)) == "MaxMind.com" {
+                        mpos = i + 14
+                        i = lo - 1
+                    }
+                }
+            }
+        }
+        i = i - 1
+    }
+    if mpos < 0 {
+        write(2, "{\"geoip\":\"no metadata marker in " + path + "\"}\n")
+        return
+    }
+    // metadata map is a normal data-encoded map at mpos, but its pointers are meta-local;
+    // node_count/record_size/ip_version are plain uints so mm_find/mm_uint work fine.
+    old_tree := GEO_TREE
+    GEO_TREE = 0
+    ncpos, ok1 := mm_find(mpos, "node_count")
+    rspos, ok2 := mm_find(mpos, "record_size")
+    ivpos, ok3 := mm_find(mpos, "ip_version")
+    GEO_TREE = old_tree
+    if ok1 == 0 || ok2 == 0 || ok3 == 0 {
+        write(2, "{\"geoip\":\"metadata missing fields\"}\n")
+        return
+    }
+    GEO_NODES = mm_uint(ncpos)
+    GEO_RS = mm_uint(rspos)
+    if mm_uint(ivpos) == 6 { GEO_V6 = 1 }
+    GEO_TREE = GEO_NODES * GEO_RS / 4
+    GEO_ON = 1
+    write(2, "{\"geoip\":\"loaded\",\"path\":\"" + path + "\",\"nodes\":" + str(GEO_NODES) + ",\"record_bits\":" + str(GEO_RS) + ",\"ipv6\":" + str(GEO_V6) + "}\n")
+}
+
+// record (side 0=left, 1=right) of node -> value
+func geo_rec(node, side) (v) {
+    v = 0
+    if GEO_RS == 24 {
+        base := node * 6
+        o := base + side*3
+        v = (byte_at(GEO_DB, o) << 16) + (byte_at(GEO_DB, o+1) << 8) + byte_at(GEO_DB, o+2)
+    }
+    if GEO_RS == 28 {
+        base := node * 7
+        mid := byte_at(GEO_DB, base+3)
+        if side == 0 {
+            v = ((mid >> 4) << 24) + (byte_at(GEO_DB, base) << 16) + (byte_at(GEO_DB, base+1) << 8) + byte_at(GEO_DB, base+2)
+        } else {
+            v = ((mid & 15) << 24) + (byte_at(GEO_DB, base+4) << 16) + (byte_at(GEO_DB, base+5) << 8) + byte_at(GEO_DB, base+6)
+        }
+    }
+    if GEO_RS == 32 {
+        base := node * 8
+        o := base + side*4
+        v = (byte_at(GEO_DB, o) << 24) + (byte_at(GEO_DB, o+1) << 16) + (byte_at(GEO_DB, o+2) << 8) + byte_at(GEO_DB, o+3)
+    }
+}
+
+// geo_lookup: dotted IPv4 -> (iso2 country, region name, city name, "lat,lon" 2-decimals)
+func geo_lookup(ip) (cc, region, city, loc) {
+    cc = ""
+    region = ""
+    city = ""
+    loc = ""
+    if GEO_ON == 0 { return cc, region, city, loc }
+    parts := split(ip, ".")
+    if len(parts) != 4 { return cc, region, city, loc }
+    addr := (parse_int(parts[0]) << 24) + (parse_int(parts[1]) << 16) + (parse_int(parts[2]) << 8) + parse_int(parts[3])
+    node := 0
+    // in an IPv6 tree, IPv4 lives under 96 leading zero bits
+    if GEO_V6 == 1 {
+        i := 0
+        while i < 96 {
+            if node >= GEO_NODES { return cc, region, city, loc }
+            node = geo_rec(node, 0)
+            i = i + 1
+        }
+    }
+    bit := 31
+    while bit >= 0 {
+        if node >= GEO_NODES { break }
+        node = geo_rec(node, (addr >> bit) & 1)
+        bit = bit - 1
+    }
+    if node <= GEO_NODES { return cc, region, city, loc }
+    rec := node - GEO_NODES + GEO_TREE
+    cpos, cok := mm_find(rec, "country")
+    if cok == 1 {
+        icpos, iok := mm_find(cpos, "iso_code")
+        if iok == 1 { cc = mm_str(icpos) }
+    }
+    spos, sok := mm_find(rec, "subdivisions")
+    if sok == 1 {
+        s0, s0ok := mm_first(spos)
+        if s0ok == 1 { region = mm_path2(s0, "names", "en") }
+    }
+    typos, tok := mm_find(rec, "city")
+    if tok == 1 { city = mm_path2(typos, "names", "en") }
+    lpos, lok := mm_find(rec, "location")
+    if lok == 1 {
+        lapos, laok := mm_find(lpos, "latitude")
+        lopos, look := mm_find(lpos, "longitude")
+        if laok == 1 {
+            if look == 1 {
+                la := floor(mm_double(lapos)*100.0 + 0.5) / 100.0
+                lo2 := floor(mm_double(lopos)*100.0 + 0.5) / 100.0
+                loc = str(la) + "," + str(lo2)
+            }
+        }
+    }
+}

@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.7.0 — 2026-07-18
+
+Geo depth, unparked.
+
+- **Pure-MFL MaxMind-DB (.mmdb) reader** — metadata parse, 24/28/32-bit search tree, IPv6 tree with IPv4 descent, full data-section decoder (pointers, maps, arrays, doubles via `f64_from_bits`). ~300 lines, zero dependencies.
+- **Country / region / city / lat,lon** captured at ingest when `VIGIE_GEOIP_DB` points at an MMDB file. Recommended: [DB-IP City Lite](https://db-ip.com/db/download/ip-to-city-lite) (CC BY 4.0 — includes IP geolocation data created by DB-IP); GeoLite2-City works too. `CF-IPCountry` remains the no-database fallback for country.
+- New dims: `stats regions`, `stats cities`.
+- **City dots on the globe**: the live feed now carries `cities`/`cities_24h` with real coordinates; both globes plot city-level markers (sized by visitors, pulsing when active) instead of country centroids when geo depth is available.
+- **Fix (important): `VIGIE_TRUST_PROXY=1`** — behind Traefik/Cloudflare, client_ip previously fell back to the proxy's address, so all proxied visitors shared one IP in the visitor hash (distinguished only by user-agent). Set it on any proxied deployment.
+
 ## v0.6.0 — 2026-07-18
 
 More rybbit alignment (geo depth still parked):

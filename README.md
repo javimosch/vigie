@@ -37,7 +37,8 @@ vigie stats overview --site example.com --since 7d
 - Ordered multi-step funnels with per-step drop-off
 - Remote HTTP API (Bearer-token gated) mirroring every stats verb
 - ~2 KB tracking snippet: SPA (pushState) tracking, custom events, identify, web vitals, error capture
-- Country via the `CF-IPCountry` header — free behind Cloudflare, no GeoIP database
+- **Geo depth**: country via `CF-IPCountry` (free behind Cloudflare) — or full country/region/city/lat-lon via a local MMDB database read by a **pure-MFL MaxMind-DB reader** (`VIGIE_GEOIP_DB=/path/db.mmdb`). Works with [DB-IP City Lite](https://db-ip.com/db/download/ip-to-city-lite) (CC BY 4.0, no account — this product includes IP geolocation data created by DB-IP) or MaxMind GeoLite2. City dots with real coordinates light up the globe.
+- Behind a proxy set `VIGIE_TRUST_PROXY=1` (required for correct visitor hashing + geo there)
 
 ## Hosted (vigie cloud)
 
