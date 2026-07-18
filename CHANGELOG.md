@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.7.1 — 2026-07-18
+
+- **The snapshot is now the full report**: every metric vigie captures, in one hart-publishable page — pages, referrers, channels, countries/regions/cities, devices, browser versions, OS, screens, languages, UTM, custom events, web vitals (p50/75/90), goals, JS errors, and top journeys. Empty sections auto-omit. Grid layout.
+
 ## v0.7.0 — 2026-07-18
 
 Geo depth, unparked.

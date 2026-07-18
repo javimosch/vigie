@@ -22,6 +22,9 @@ a{color:var(--accent)}
 <p><a href="index.html">← vigie</a></p>
 <h1>Changelog</h1>
 
+<h2>v0.7.1 <span class="muted">— 2026-07-18</span></h2>
+<ul><li><b>The snapshot is now the full report</b> — every captured metric in one hart-publishable page (channels, regions/cities, OS/screens/languages, vitals, goals, errors, journeys…); empty sections auto-omit.</li></ul>
+
 <h2>v0.7.0 <span class="muted">— 2026-07-18</span></h2>
 <ul><li><b>Geo depth:</b> a pure-MFL MaxMind-DB reader — country/region/city/lat,lon from a local .mmdb (<a href="https://db-ip.com/db/download/ip-to-city-lite">DB-IP City Lite</a>, CC BY 4.0, or GeoLite2). New dims <code>regions</code>, <code>cities</code>.</li><li><b>City dots on the globe</b> — real coordinates, sized by visitors, pulsing when active.</li><li><b>Fix:</b> <code>VIGIE_TRUST_PROXY=1</code> — proxied deployments previously hashed every visitor under the proxy IP.</li></ul>
 

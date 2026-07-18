@@ -4,7 +4,7 @@
 
 // ---------- constants ----------
 
-func vigie_version() (v) { v = "0.7.0" }
+func vigie_version() (v) { v = "0.7.1" }
 func session_window() (s) { s = 1800 }
 
 // ---------- CLI arg helpers ----------
@@ -1147,19 +1147,97 @@ type BreakRow struct {
     visitors int
 }
 
-func snap_table(db, title, dim, site, cutoff) (h) {
-    col := "path"
-    cond := " AND kind = 'pageview'"
-    if dim == "referrers" { col = "ref"  cond = " AND kind = 'pageview' AND ref != ''" }
-    if dim == "countries" { col = "country"  cond = " AND country != ''" }
-    if dim == "browsers" { col = "browser"  cond = "" }
-    if dim == "events" { col = "name"  cond = " AND kind = 'event'" }
-    rows := parse(sqlite_query(db, "SELECT " + col + " AS value, COUNT(*) AS hits, COUNT(DISTINCT vid) AS visitors FROM events WHERE site = ? AND ts > ?" + cond + " GROUP BY " + col + " ORDER BY hits DESC LIMIT 8", []string{site, cutoff}), []BreakRow{})
+// snap_table renders any breakdown dimension as a report card (via breakdown_json,
+// so the snapshot automatically covers every dim the stats engine knows).
+func snap_table(db, title, dim, site, since) (h) {
+    bj := breakdown_json(db, dim, site, since, "8", "", []string{})
+    h = ""
+    if bj == "" { return h }
+    if bj == "[]" { return h }
+    rows := parse(bj, []BreakRow{})
     h = "<div class='card'><h2>" + title + "</h2><table><tr><th></th><th>hits</th><th>visitors</th></tr>"
     for _, r := range rows {
         v := r.value
         if v == "" { v = "(none)" }
         h = h + "<tr><td>" + v + "</td><td>" + str(r.hits) + "</td><td>" + str(r.visitors) + "</td></tr>"
+    }
+    h = h + "</table></div>"
+}
+
+type VitRow struct {
+    metric  string
+    unit    string
+    samples int
+    p50     int
+    p75     int
+    p90     int
+}
+
+func snap_vitals(db, site, since) (h) {
+    h = ""
+    vj := vitals_json(db, site, since)
+    if vj == "[]" { return h }
+    rows := parse(vj, []VitRow{})
+    h = "<div class='card'><h2>Web vitals</h2><table><tr><th></th><th>p50</th><th>p75</th><th>p90</th></tr>"
+    for _, r := range rows {
+        h = h + "<tr><td>" + r.metric + " <span class='muted'>(" + r.unit + ", n=" + str(r.samples) + ")</span></td><td>" + str(r.p50) + "</td><td>" + str(r.p75) + "</td><td>" + str(r.p90) + "</td></tr>"
+    }
+    h = h + "</table></div>"
+}
+
+type ErrRow struct {
+    message      string
+    hits         int
+    sessions_hit int
+    last_seen    int
+}
+
+func snap_errors(db, site, since) (h) {
+    h = ""
+    ej := errors_json(db, site, since, "8")
+    if ej == "[]" { return h }
+    rows := parse(ej, []ErrRow{})
+    h = "<div class='card wide'><h2>JS errors</h2><table><tr><th></th><th>hits</th><th>sessions</th></tr>"
+    for _, r := range rows {
+        h = h + "<tr><td>" + jesc(r.message) + "</td><td>" + str(r.hits) + "</td><td>" + str(r.sessions_hit) + "</td></tr>"
+    }
+    h = h + "</table></div>"
+}
+
+type GoalOut struct {
+    goal        string
+    conversions int
+    sessions    int
+    rate_pct    int
+}
+
+func snap_goals(db, site, since) (h) {
+    h = ""
+    gj := goals_json(db, site, since)
+    if gj == "[]" { return h }
+    rows := parse(gj, []GoalOut{})
+    h = "<div class='card'><h2>Goals</h2><table><tr><th></th><th>conv</th><th>rate</th></tr>"
+    for _, r := range rows {
+        h = h + "<tr><td>" + jesc(r.goal) + "</td><td>" + str(r.conversions) + "</td><td>" + str(r.rate_pct) + "%</td></tr>"
+    }
+    h = h + "</table></div>"
+}
+
+type SeqRow struct {
+    seq      string
+    sessions int
+}
+
+func snap_journeys(db, site, since) (h) {
+    h = ""
+    jj := journeys_json(db, site, since, "8")
+    epos, eok := json_get(jj, ".edges")
+    if eok != "" { return h }
+    rows := parse(epos, []SeqRow{})
+    if len(rows) == 0 { return h }
+    h = "<div class='card wide'><h2>Top journeys</h2><table><tr><th></th><th>sessions</th></tr>"
+    for _, r := range rows {
+        h = h + "<tr><td>" + jesc(r.seq) + "</td><td>" + str(r.sessions) + "</td></tr>"
     }
     h = h + "</table></div>"
 }
@@ -1198,7 +1276,7 @@ func snapshot_html(db, site, since) (h) {
     if sessions > 0 { bounce_pct = bounced * 100 / sessions }
     series := parse(sqlite_query(db, "SELECT strftime('%Y-%m-%d', ts, 'unixepoch') AS bucket, COUNT(CASE WHEN kind='pageview' THEN 1 END) AS pageviews, COUNT(DISTINCT vid) AS visitors, COUNT(CASE WHEN kind='event' THEN 1 END) AS events FROM events WHERE site = ? AND ts > ? GROUP BY bucket ORDER BY bucket", p), []TSRow{})
     h = "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>vigie — " + site + "</title><style>"
-    h = h + "body{font-family:system-ui,sans-serif;background:#0d1117;color:#e6edf3;margin:0;padding:24px;max-width:820px;margin:0 auto}h1{font-size:20px}h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:#8b949e;margin:0 0 10px}.muted{color:#8b949e}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin:18px 0}.stat{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px}.stat b{display:block;font-size:24px}.stat span{color:#8b949e;font-size:12px}.card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;margin:12px 0}table{width:100%;border-collapse:collapse;font-size:13px}td,th{text-align:left;padding:4px 8px;border-bottom:1px solid #21262d}th{color:#8b949e;font-weight:normal}td:nth-child(2),td:nth-child(3),th:nth-child(2),th:nth-child(3){text-align:right}svg{width:100%;height:190px}footer{color:#8b949e;font-size:12px;margin-top:20px}"
+    h = h + "body{font-family:system-ui,sans-serif;background:#0d1117;color:#e6edf3;margin:0;padding:24px;max-width:1040px;margin:0 auto}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px}.grid .card{margin:0}.card.wide{grid-column:1/-1}h1{font-size:20px}h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:#8b949e;margin:0 0 10px}.muted{color:#8b949e}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:12px;margin:18px 0}.stat{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:14px}.stat b{display:block;font-size:24px}.stat span{color:#8b949e;font-size:12px}.card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;margin:12px 0}table{width:100%;border-collapse:collapse;font-size:13px}td,th{text-align:left;padding:4px 8px;border-bottom:1px solid #21262d}th{color:#8b949e;font-weight:normal}td:nth-child(2),td:nth-child(3),th:nth-child(2),th:nth-child(3){text-align:right}svg{width:100%;height:190px}footer{color:#8b949e;font-size:12px;margin-top:20px}"
     h = h + "</style></head><body><h1>" + site + " <span class='muted'>· last " + since + " · generated by vigie</span></h1>"
     h = h + "<div class='cards'>"
     h = h + "<div class='stat'><b>" + str(pageviews) + "</b><span>pageviews</span></div>"
@@ -1208,11 +1286,25 @@ func snapshot_html(db, site, since) (h) {
     h = h + "<div class='stat'><b>" + str(bounce_pct) + "%</b><span>bounce rate</span></div>"
     h = h + "</div>"
     h = h + "<div class='card'><h2>pageviews per day</h2>" + snap_svg(series) + "</div>"
-    h = h + snap_table(db, "Top pages", "pages", site, cutoff)
-    h = h + snap_table(db, "Referrers", "referrers", site, cutoff)
-    h = h + snap_table(db, "Countries", "countries", site, cutoff)
-    h = h + snap_table(db, "Browsers", "browsers", site, cutoff)
-    h = h + snap_table(db, "Custom events", "events", site, cutoff)
+    h = h + "<div class='grid'>"
+    h = h + snap_table(db, "Top pages", "pages", site, since)
+    h = h + snap_table(db, "Referrers", "referrers", site, since)
+    h = h + snap_table(db, "Channels", "channels", site, since)
+    h = h + snap_table(db, "Countries", "countries", site, since)
+    h = h + snap_table(db, "Regions", "regions", site, since)
+    h = h + snap_table(db, "Cities", "cities", site, since)
+    h = h + snap_table(db, "Devices", "devices", site, since)
+    h = h + snap_table(db, "Browsers", "browser-versions", site, since)
+    h = h + snap_table(db, "Operating systems", "os", site, since)
+    h = h + snap_table(db, "Screens", "screens", site, since)
+    h = h + snap_table(db, "Languages", "languages", site, since)
+    h = h + snap_table(db, "UTM sources", "utm-sources", site, since)
+    h = h + snap_table(db, "Custom events", "events", site, since)
+    h = h + snap_vitals(db, site, since)
+    h = h + snap_goals(db, site, since)
+    h = h + snap_errors(db, site, since)
+    h = h + snap_journeys(db, site, since)
+    h = h + "</div>"
     h = h + "<footer>vigie " + vigie_version() + " — agent-first, cookieless analytics. Snapshot generated " + time_format_utc(now(), "%Y-%m-%d %H:%M") + " UTC.</footer></body></html>"
 }
 
