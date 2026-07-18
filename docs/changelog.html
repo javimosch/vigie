@@ -22,6 +22,18 @@ a{color:var(--accent)}
 <p><a href="index.html">← vigie</a></p>
 <h1>Changelog</h1>
 
+<h2>v0.4.0 <span class="muted">— 2026-07-18</span></h2>
+<p>Rybbit core-feature alignment, the agent-first way.</p>
+<ul>
+<li><b>Realtime:</b> <code>vigie stats live</code> + <code>GET /api/stats/live</code> — last-5-min actives, pages, countries, latest hits</li>
+<li><b>Real geo:</b> the hosted ingest rides the Cloudflare proxy → <code>CF-IPCountry</code> on every event</li>
+<li><b>The globe:</b> <code>vigie snapshot --globe --publish --live</code> — a self-contained rotating world map that becomes a <b>living hart artifact</b>: hart pulls the live feed and the globe repaints while you watch (<a href="https://hart.intrane.fr/a/vigie/intrane-globe">see it live</a>)</li>
+<li><b>Session explorer:</b> <code>vigie sessions list/show</code> — per-session rollups + the full ordered event trail</li>
+<li><b>Retention cohorts:</b> weekly cohorts over identified users (<code>window.vigie.identify()</code>); the daily-rotating hash can't follow people across days — by design</li>
+<li><b>Web vitals:</b> auto-collected LCP/FCP/CLS/INP/TTFB → <code>vigie stats vitals</code> (p50/p75/p90)</li>
+<li><b>Error tracking:</b> auto-captured JS errors → <code>vigie stats errors</code> grouped with counts + last seen</li>
+</ul>
+
 <h2>v0.3.1 <span class="muted">— 2026-07-18</span></h2>
 <ul><li><b>Fix (important):</b> <code>vigie update</code> resolved its own path via a child process's <code>/proc/self/exe</code> — where "self" is the child, so the atomic swap could target the wrong binary. Now resolves <code>argv[0]</code> via PATH lookup + <code>readlink -f</code>. The v0.3.0 release was pulled.</li></ul>
 

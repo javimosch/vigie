@@ -26,13 +26,17 @@ vigie stats overview --site example.com --since 7d
 ## Features
 
 - Pageviews, visitors, sessions (30-min window), bounce rate, session duration
+- **Realtime** last-5-min feed (`stats live`) and a **living globe** — `vigie snapshot --globe --publish --live` publishes a self-contained rotating world map to hart that repaints itself from the live feed ([see it running](https://hart.intrane.fr/a/vigie/intrane-globe))
+- **Session explorer** (`sessions list/show`): per-session rollups + the full ordered event trail
+- **Retention cohorts** over identified users (`window.vigie.identify()` — the daily-rotating hash can't follow people across days, by design)
+- **Web vitals** (LCP/FCP/CLS/INP/TTFB, auto-collected, p50/p75/p90) and **error tracking** (grouped JS errors + rejections)
 - Custom events with JSON props (`window.vigie('signup', {plan:'free'})`)
 - Breakdowns: pages, referrers, countries, devices, browsers, events, UTM source/medium/campaign
 - Timeseries (hour/day buckets), dimension filters on every query
 - Goals (event or path match, `/path*` prefixes) + conversion rates
 - Ordered multi-step funnels with per-step drop-off
 - Remote HTTP API (Bearer-token gated) mirroring every stats verb
-- `<1 KB` tracking snippet with SPA (pushState) support
+- ~2 KB tracking snippet: SPA (pushState) tracking, custom events, identify, web vitals, error capture
 - Country via the `CF-IPCountry` header — free behind Cloudflare, no GeoIP database
 
 ## Install

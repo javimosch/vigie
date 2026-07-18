@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.4.0 — 2026-07-18
+
+Rybbit core-feature alignment, the agent-first way.
+
+- **Realtime:** `vigie stats live` + `GET /api/stats/live` — last-5-min actives, pages, countries, latest hits (`&raw=1` returns the bare object for refresh loops)
+- **Real geo:** vigie.intrane.fr now rides the Cloudflare proxy → `CF-IPCountry` populates on every ingest (self-host: any proxy that sets the header)
+- **The globe:** `vigie snapshot --globe` — a self-contained rotating dot-matrix world map (canvas, embedded landmask + centroids, zero external assets). `--publish --live` makes it a **living hart artifact**: hart pulls the live feed on a cadence and the globe repaints while you watch. Live: hart.intrane.fr/a/vigie/intrane-globe
+- **Session explorer:** `vigie sessions list` (entry/exit, duration, pageviews/events/errors, geo, device) + `sessions show --sid` (the full ordered event trail); `GET /api/sessions`
+- **Retention cohorts:** `vigie stats retention` — weekly cohorts over **identified** users (`window.vigie.identify('id')` / `vigie track --uid`), because the daily-rotating visitor hash cannot follow a person across days (privacy by design, documented honestly)
+- **Web vitals:** the snippet auto-collects LCP/FCP/CLS/INP/TTFB (PerformanceObserver, sent on pagehide) → `vigie stats vitals` with p50/p75/p90
+- **Error tracking:** auto-captured JS errors + unhandled rejections (max 5/page) → `vigie stats errors` grouped by message with counts, sessions hit, last seen, sample source
+- Snippet is now ~2.1 KB (was 0.6 KB) and served with `Cache-Control`; ingest validates event kinds (400 on unknown)
+
 ## v0.3.1 — 2026-07-18
 
 - **Fix (important):** `vigie update` resolved its own path by running `readlink -f /proc/self/exe` in a child process — where `self` is the child, so the atomic swap could target the wrong binary. Now resolves `argv[0]` via PATH lookup + `readlink -f`. The v0.3.0 release was pulled.
