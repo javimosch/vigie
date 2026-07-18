@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.6.0 — 2026-07-18
+
+More rybbit alignment (geo depth still parked):
+
+- **User journeys:** `vigie stats journeys` — per-session path transitions (edges) + top 3-step sequences, counted once per session. Rybbit's sankey, as JSON an agent can reason over.
+- **Channels:** `vigie stats channels` — direct / organic / social / paid / campaign / referral classification derived from referrer + UTM at query time.
+- **Browser versions:** captured from the UA (`bv` column) — `vigie stats browser-versions` ("chrome 126").
+- **User profiles:** `vigie users list` (identified uids: first/last seen, sessions, pageviews) + `users show --uid` (per-user session history); `GET /api/users`.
+
 ## v0.5.0 — 2026-07-18
 
 Closing the capture + visual gap vs rybbit (geo depth parked deliberately).
