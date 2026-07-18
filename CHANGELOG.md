@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.4.3 — 2026-07-18
+
+- `vigie globe --site X` — one-verb retrieval of the ready-to-open war-room URL (site key resolved from the db, base from `--base`/`VIGIE_BASE_URL`)
+
 ## v0.4.2 — 2026-07-18
 
 - **The war-room:** `GET /globe?site=&key=` — vigie serves the live globe itself; the page polls its own `/api/stats/live` every 5s (same-origin, no hart-CSP constraints). Sub-10s latency from a visitor landing to the pulse.

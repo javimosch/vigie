@@ -22,6 +22,9 @@ a{color:var(--accent)}
 <p><a href="index.html">← vigie</a></p>
 <h1>Changelog</h1>
 
+<h2>v0.4.3 <span class="muted">— 2026-07-18</span></h2>
+<ul><li><code>vigie globe --site X</code> — one-verb retrieval of the ready-to-open war-room URL</li></ul>
+
 <h2>v0.4.2 <span class="muted">— 2026-07-18</span></h2>
 <ul><li><b>The war-room:</b> <code>GET /globe?site=&key=</code> — vigie serves the live globe itself, polling its own live feed every 5s (same-origin). Sub-10s pulse latency.</li><li><b>Per-site read keys:</b> <code>site_key</code> is now a scoped, revocable read credential (live aggregates on one site only); <code>vigie site key</code> / <code>site rotate-key</code>.</li></ul>
 

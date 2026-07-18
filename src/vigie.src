@@ -4,7 +4,7 @@
 
 // ---------- constants ----------
 
-func vigie_version() (v) { v = "0.4.2" }
+func vigie_version() (v) { v = "0.4.3" }
 func session_window() (s) { s = 1800 }
 
 // ---------- CLI arg helpers ----------
@@ -604,6 +604,24 @@ func cmd_stats() {
     sqlite_close(db)
 }
 
+// vigie globe --site X [--base https://host] — the war-room URL, ready to open.
+// Base resolution: --base > VIGIE_BASE_URL > http://127.0.0.1:8090.
+func cmd_globe_url() {
+    site := argval("--site", "")
+    if site == "" { fail(80, "missing --site", "vigie globe --site example.com") }
+    db := db_open()
+    db_init(db)
+    rows := sqlite_query(db, "SELECT site_key FROM sites WHERE domain = ?", []string{site})
+    sqlite_close(db)
+    if rows == "[]" { fail(90, "site not found: " + site, "vigie site add " + site) }
+    raw, _ := json_get(rows, "[0].site_key")
+    k := unquote(raw)
+    base := argval("--base", env("VIGIE_BASE_URL"))
+    if base == "" { base = "http://127.0.0.1:8090" }
+    u := base + "/globe?site=" + url_encode(site) + "&key=" + url_encode(k)
+    emit("{\"site\":\"" + jesc(site) + "\",\"url\":\"" + jesc(u) + "\",\"note\":\"key grants live aggregates for this site only; revoke with: vigie site rotate-key --site " + jesc(site) + "\"}")
+}
+
 func cmd_sessions() {
     a := args()
     if len(a) < 3 { fail(80, "usage: vigie sessions list|show --site <domain> [--since 24h] [--limit 20] [--sid <id>]", "") }
@@ -1078,6 +1096,7 @@ func cmd_help_json() {
     h = h + "{\"name\":\"serve\",\"usage\":\"vigie serve [--port 8090] [--db vigie.db]\",\"summary\":\"run the ingest+snippet HTTP server\"},"
     h = h + "{\"name\":\"site\",\"usage\":\"vigie site add <domain> | site list | site key --site d | site rotate-key --site d\",\"summary\":\"register/list tracked sites; key/rotate-key manage the per-site READ key (grants /api/stats/live + /globe only)\"},"
     h = h + "{\"name\":\"stats\",\"usage\":\"vigie stats <overview|timeseries|live|goals|retention|vitals|errors|pages|referrers|countries|devices|browsers|events|utm-sources|utm-mediums|utm-campaigns> --site <domain> [--since 7d|24h|4w] [--limit 10] [--bucket day|hour] [--weeks 8] [--path P] [--country C] [--device D] [--browser B] [--ref R] [--utm-source S]\",\"summary\":\"query analytics as JSON (live = last-5-min realtime; retention = weekly cohorts over identified uids; vitals = LCP/FCP/CLS/INP/TTFB p50/p75/p90; errors = grouped JS errors)\"},"
+    h = h + "{\"name\":\"globe\",\"usage\":\"vigie globe --site <domain> [--base https://host]\",\"summary\":\"print the ready-to-open war-room URL (live globe, per-site read key); base from --base or VIGIE_BASE_URL\"},"
     h = h + "{\"name\":\"sessions\",\"usage\":\"vigie sessions list --site s [--since 24h] [--limit 20] | sessions show --site s --sid <id>\",\"summary\":\"session explorer: per-session rollups (entry/exit/duration/errors) + the full ordered event trail\"},"
     h = h + "{\"name\":\"track\",\"usage\":\"vigie track --site <domain> --name <event> [--actor id] [--path p] [--props json]\",\"summary\":\"record a server-side event (agents are users too)\"},"
     h = h + "{\"name\":\"goal\",\"usage\":\"vigie goal add --site s --name n --kind event|path --match <event|/path|/path*> | goal list --site s | goal rm --site s --name n\",\"summary\":\"define conversions; query with `vigie stats goals`\"},"
@@ -1208,6 +1227,7 @@ func main() {
     if cmd == "stats" { cmd_stats() }
     if cmd == "track" { cmd_track() }
     if cmd == "prune" { cmd_prune() }
+    if cmd == "globe" { cmd_globe_url() }
     if cmd == "sessions" { cmd_sessions() }
     if cmd == "goal" { cmd_goal() }
     if cmd == "funnel" { cmd_funnel() }
