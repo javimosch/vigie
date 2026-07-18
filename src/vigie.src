@@ -4,7 +4,7 @@
 
 // ---------- constants ----------
 
-func vigie_version() (v) { v = "0.1.0-m0" }
+func vigie_version() (v) { v = "0.2.0" }
 func session_window() (s) { s = 1800 }
 
 // ---------- CLI arg helpers ----------
@@ -34,6 +34,12 @@ func unquote(s) (out) {
     if has_prefix(out, "\"") {
         if has_suffix(out, "\"") { out = substr(out, 1, len(out)-1) }
     }
+}
+
+func jesc(s) (o) {
+    o = replace(s, "\\", "\\\\")
+    o = replace(o, "\"", "\\\"")
+    o = replace(o, "\n", "\\n")
 }
 
 func fail(code, msg, hint) {
@@ -270,15 +276,198 @@ func cmd_site() {
     sqlite_close(db)
 }
 
+// shared filter builder: base WHERE + optional dimension filters from flags
+func filter_sql() (w) {
+    w = ""
+    if argval("--path", "") != "" { w = w + " AND path = ?" }
+    if argval("--country", "") != "" { w = w + " AND country = ?" }
+    if argval("--device", "") != "" { w = w + " AND device = ?" }
+    if argval("--browser", "") != "" { w = w + " AND browser = ?" }
+    if argval("--ref", "") != "" { w = w + " AND ref = ?" }
+    if argval("--utm-source", "") != "" { w = w + " AND utm_source = ?" }
+}
+
+func filter_params(base) (p) {
+    p = base
+    if argval("--path", "") != "" { p = append(p, argval("--path", "")) }
+    if argval("--country", "") != "" { p = append(p, argval("--country", "")) }
+    if argval("--device", "") != "" { p = append(p, argval("--device", "")) }
+    if argval("--browser", "") != "" { p = append(p, argval("--browser", "")) }
+    if argval("--ref", "") != "" { p = append(p, argval("--ref", "")) }
+    if argval("--utm-source", "") != "" { p = append(p, argval("--utm-source", "")) }
+}
+
+func stats_timeseries(db, site, since) {
+    bucket := argval("--bucket", "day")
+    fmt := "%Y-%m-%d"
+    if bucket == "hour" { fmt = "%Y-%m-%dT%H:00" }
+    cutoff := str(now() - since_secs(since))
+    p := filter_params([]string{fmt, site, cutoff})
+    rows := sqlite_query(db, "SELECT strftime(?, ts, 'unixepoch') AS bucket, COUNT(CASE WHEN kind='pageview' THEN 1 END) AS pageviews, COUNT(DISTINCT vid) AS visitors, COUNT(CASE WHEN kind='event' THEN 1 END) AS events FROM events WHERE site = ? AND ts > ?" + filter_sql() + " GROUP BY bucket ORDER BY bucket", p)
+    emit(rows)
+}
+
+// breakdown dimensions: whitelisted column + row-kind restriction
+func stats_breakdown(db, dim, site, since) {
+    col := ""
+    cond := ""
+    if dim == "pages" { col = "path"  cond = " AND kind = 'pageview'" }
+    if dim == "referrers" { col = "ref"  cond = " AND kind = 'pageview' AND ref != ''" }
+    if dim == "countries" { col = "country"  cond = " AND country != ''" }
+    if dim == "devices" { col = "device" }
+    if dim == "browsers" { col = "browser" }
+    if dim == "events" { col = "name"  cond = " AND kind = 'event'" }
+    if dim == "utm-sources" { col = "utm_source"  cond = " AND utm_source != ''" }
+    if dim == "utm-mediums" { col = "utm_medium"  cond = " AND utm_medium != ''" }
+    if dim == "utm-campaigns" { col = "utm_campaign"  cond = " AND utm_campaign != ''" }
+    if col == "" { fail(80, "unknown stats dimension: " + dim, "vigie help-json lists dimensions") }
+    limitn := argval("--limit", "10")
+    if parse_int(limitn) < 1 { limitn = "10" }
+    cutoff := str(now() - since_secs(since))
+    p := filter_params([]string{site, cutoff})
+    rows := sqlite_query(db, "SELECT " + col + " AS value, COUNT(*) AS hits, COUNT(DISTINCT vid) AS visitors FROM events WHERE site = ? AND ts > ?" + cond + filter_sql() + " GROUP BY " + col + " ORDER BY hits DESC LIMIT " + str(parse_int(limitn)), p)
+    emit(rows)
+}
+
 func cmd_stats() {
     a := args()
-    if len(a) < 3 { fail(80, "usage: vigie stats overview --site <domain> [--since 7d]", "") }
+    if len(a) < 3 { fail(80, "usage: vigie stats <overview|timeseries|pages|referrers|countries|devices|browsers|events|utm-sources|utm-mediums|utm-campaigns> --site <domain> [--since 7d]", "") }
     site := argval("--site", "")
     if site == "" { fail(80, "missing --site", "vigie stats overview --site example.com") }
     db := db_open()
     db_init(db)
-    if a[2] == "overview" { stats_overview(db, site, argval("--since", "7d")) }
+    since := argval("--since", "7d")
+    sub := a[2]
+    if sub == "overview" { stats_overview(db, site, since) } else {
+        if sub == "timeseries" { stats_timeseries(db, site, since) } else { stats_breakdown(db, sub, site, since) }
+    }
     sqlite_close(db)
+}
+
+// ---------- retention ----------
+
+func cmd_prune() {
+    site := argval("--site", "")
+    keep := argval("--keep", "90d")
+    db := db_open()
+    db_init(db)
+    cutoff := str(now() - since_secs(keep))
+    if site == "" {
+        sqlite_exec(db, "DELETE FROM events WHERE ts < ?", []string{cutoff})
+    } else {
+        sqlite_exec(db, "DELETE FROM events WHERE site = ? AND ts < ?", []string{site, cutoff})
+    }
+    left := q_count(db, "SELECT COUNT(*) AS n FROM events", []string{})
+    sqlite_close(db)
+    emit("{\"pruned_before\":" + cutoff + ",\"keep\":\"" + keep + "\",\"events_remaining\":" + str(left) + "}")
+}
+
+// ---------- cli-specs verbs: guide · help-json · feedback · update ----------
+
+func cmd_guide() {
+    v := vigie_version()
+    g := "{\"schema\":\"vigie.guide/v1\",\"version\":\"" + v + "\","
+    g = g + "\"tagline\":\"agent-first, cookieless web analytics in one static binary — no dashboard, JSON verbs + on-demand hart snapshots\","
+    g = g + "\"model\":{\"what\":\"POST /api/event ingests pageviews/custom events (browser snippet or server-side). Visitors are a daily-rotating salted hash of IP+UA — no cookies, no consent banner, raw IP never stored. Sessions stitch events within a 30-min window. Everything is queried via `vigie stats *` returning JSON on stdout.\",\"storage\":\"SQLite (WAL), one file, indexes on (site,ts) and (site,vid,ts). Prune with `vigie prune`.\",\"server_side\":\"agents/backends are first-class tracked users: `vigie track --site s --name deploy --actor ci` or POST /api/event with no browser.\"},"
+    g = g + "\"quickstart\":[\"vigie site add example.com\",\"vigie serve --port 8090 --db vigie.db\",\"add <script defer src=\\\"https://your-host/vigie.js\\\" data-site=\\\"example.com\\\"></script> to your pages\",\"vigie stats overview --site example.com --since 7d\"],"
+    g = g + "\"concepts\":{\"visitor\":\"sha256(secret+day+site+ip+ua)[0:16], rotates daily — privacy by construction\",\"session\":\"reuse the visitor's last session id if their last event is <30min old\",\"bounce\":\"sessions with exactly one pageview / all sessions with pageviews\",\"country\":\"read from the CF-IPCountry header (free behind Cloudflare); empty otherwise\",\"filters\":\"every stats verb accepts --path --country --device --browser --ref --utm-source\"},"
+    g = g + "\"http\":{\"POST /api/event\":\"{site,t:pageview|event,name,path,ref,q,props} — 404 for unregistered sites\",\"GET /vigie.js\":\"the <1KB tracking snippet (auto SPA pushState tracking, window.vigie(name,props) for custom events)\",\"GET /_health\":\"liveness + version\"},"
+    g = g + "\"gotchas\":[\"stats timeseries buckets are sparse — missing buckets mean zero, zero-fill client-side\",\"visitor counts across >1 day dedupe per-day (the hash rotates) — trend-accurate, not absolute uniques\",\"server-side events have device=browser=server\",\"the ingest endpoint answers 404 for sites you have not added — add them first\"],"
+    g = g + "\"exit_codes\":{\"0\":\"ok\",\"80-89\":\"input/validation\",\"90-99\":\"resource (not found/exists)\",\"100-109\":\"integration (network/db)\",\"110-119\":\"internal\"}}"
+    println(g)
+}
+
+func cmd_help_json() {
+    v := vigie_version()
+    h := "{\"schema\":\"vigie.help/v1\",\"version\":\"" + v + "\",\"stdout\":\"data only (JSON)\",\"stderr\":\"context only\",\"commands\":["
+    h = h + "{\"name\":\"serve\",\"usage\":\"vigie serve [--port 8090] [--db vigie.db]\",\"summary\":\"run the ingest+snippet HTTP server\"},"
+    h = h + "{\"name\":\"site\",\"usage\":\"vigie site add <domain> | site list\",\"summary\":\"register/list tracked sites\"},"
+    h = h + "{\"name\":\"stats\",\"usage\":\"vigie stats <overview|timeseries|pages|referrers|countries|devices|browsers|events|utm-sources|utm-mediums|utm-campaigns> --site <domain> [--since 7d|24h|4w] [--limit 10] [--bucket day|hour] [--path P] [--country C] [--device D] [--browser B] [--ref R] [--utm-source S]\",\"summary\":\"query analytics as JSON\"},"
+    h = h + "{\"name\":\"track\",\"usage\":\"vigie track --site <domain> --name <event> [--actor id] [--path p] [--props json]\",\"summary\":\"record a server-side event (agents are users too)\"},"
+    h = h + "{\"name\":\"prune\",\"usage\":\"vigie prune [--site <domain>] [--keep 90d]\",\"summary\":\"delete events older than the retention window\"},"
+    h = h + "{\"name\":\"guide\",\"usage\":\"vigie guide\",\"summary\":\"embedded operator manual (JSON)\"},"
+    h = h + "{\"name\":\"help-json\",\"usage\":\"vigie help-json\",\"summary\":\"this machine-readable catalog\"},"
+    h = h + "{\"name\":\"feedback\",\"usage\":\"vigie feedback <message> [--kind bug|idea|praise] [--context c]\",\"summary\":\"send feedback (dual-write, never fails)\"},"
+    h = h + "{\"name\":\"update\",\"usage\":\"vigie update [--check]\",\"summary\":\"self-update from GitHub releases (sha256-verified, atomic, .bak rollback)\"},"
+    h = h + "{\"name\":\"version\",\"usage\":\"vigie version\",\"summary\":\"print the version\"}"
+    h = h + "]}"
+    println(h)
+}
+
+func post_json(url, payload) (ok) {
+    ok = 0
+    status, _, err := http_request("POST", url, []string{"content-type: application/json"}, payload)
+    if err == "" { if status == 200 { ok = 1 } }
+}
+
+func cmd_feedback() {
+    a := args()
+    if len(a) < 3 { fail(80, "usage: vigie feedback <message> [--kind bug|idea|praise] [--context c]", "") }
+    msg := a[2]
+    id := to_hex(rand_bytes(6))
+    rep := env("USER")
+    if rep == "" { rep = "agent" }
+    payload := "{\"app\":\"vigie\",\"version\":\"" + vigie_version() + "\",\"kind\":\"" + jesc(argval("--kind", "note")) + "\",\"message\":\"" + jesc(msg) + "\",\"context\":\"" + jesc(argval("--context", "")) + "\",\"reporter\":\"" + jesc(rep) + "\",\"id\":\"" + id + "\"}"
+    relay := env("FEEDBACK_RELAY")
+    if relay == "" { relay = "https://feedback.intrane.fr" }
+    relayed := 0
+    if relay != "off" { relayed = post_json(relay + "/v1/feedback", payload) }
+    own := env("VIGIE_FEEDBACK_URL")
+    stored := 0
+    if own != "" { stored = post_json(own, payload) }
+    rl := "false"
+    if relayed == 1 { rl = "true" }
+    st := "false"
+    if stored == 1 { st = "true" }
+    emit("{\"id\":\"" + id + "\",\"relayed\":" + rl + ",\"stored\":" + st + "}")
+}
+
+func self_path() (p) {
+    code, out, _ := exec("readlink -f /proc/self/exe")
+    p = trim(out)
+    if code != 0 { p = args()[0] }
+}
+
+func cmd_update() {
+    base := env("VIGIE_UPDATE_URL")
+    if base == "" { base = "https://github.com/javimosch/vigie/releases/latest/download" }
+    tmpsha := "/tmp/vigie-sha-" + to_hex(rand_bytes(4))
+    rc := system("curl -fsSL '" + base + "/vigie.sha256' -o " + tmpsha)
+    if rc != 0 { fail(100, "cannot fetch release checksum", "check network / releases exist") }
+    remote_line := trim(read_file(tmpsha))
+    remove(tmpsha)
+    remote_sha := split(remote_line, " ")[0]
+    self := self_path()
+    local_sha := to_hex(sha256_bytes(read_file_bytes(self)))
+    if local_sha == remote_sha {
+        emit("{\"up_to_date\":true,\"sha256\":\"" + substr(local_sha, 0, 12) + "\"}")
+        return
+    }
+    if hasflag("--check") == 1 {
+        emit("{\"up_to_date\":false,\"local\":\"" + substr(local_sha, 0, 12) + "\",\"remote\":\"" + substr(remote_sha, 0, 12) + "\"}")
+        exit(5)
+    }
+    tmp := "/tmp/vigie-update-" + to_hex(rand_bytes(4))
+    write(2, "{\"msg\":\"downloading update\"}\n")
+    rc = system("curl -fsSL '" + base + "/vigie' -o " + tmp)
+    if rc != 0 { fail(100, "download failed", "") }
+    got := to_hex(sha256_bytes(read_file_bytes(tmp)))
+    if got != remote_sha {
+        remove(tmp)
+        fail(100, "sha256 mismatch: " + substr(got, 0, 12) + " != " + substr(remote_sha, 0, 12), "retry; possible partial download")
+    }
+    system("chmod +x " + tmp)
+    code, out, _ := exec(tmp + " version")
+    if code != 0 { remove(tmp)  fail(100, "smoke test failed", "") }
+    if contains(out, "version") == false { remove(tmp)  fail(100, "smoke test output unexpected", "") }
+    bak := self + ".bak"
+    remove(bak)
+    if system("mv " + self + " " + bak) != 0 { remove(tmp)  fail(110, "cannot back up current binary", "") }
+    if system("mv " + tmp + " " + self) != 0 {
+        system("mv " + bak + " " + self)
+        fail(110, "cannot install new binary (rolled back)", "")
+    }
+    emit("{\"updated\":true,\"sha256\":\"" + substr(remote_sha, 0, 12) + "\",\"backup\":\"" + bak + "\"}")
 }
 
 // server-side event: agents/backends are first-class tracked users
@@ -306,5 +495,11 @@ func main() {
     if cmd == "site" { cmd_site() }
     if cmd == "stats" { cmd_stats() }
     if cmd == "track" { cmd_track() }
+    if cmd == "prune" { cmd_prune() }
+    if cmd == "guide" { cmd_guide() }
+    if cmd == "help-json" { cmd_help_json() }
+    if cmd == "help" { cmd_help_json() }
+    if cmd == "feedback" { cmd_feedback() }
+    if cmd == "update" { cmd_update() }
     if cmd == "version" { emit("{\"version\":\"" + vigie_version() + "\"}") }
 }
