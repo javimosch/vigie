@@ -1,0 +1,50 @@
+// vigie app — the router + CLI entrypoint of the OSS single-tenant edition.
+// Everything else lives in core.src so alternative editions (e.g. a multi-tenant
+// cloud build) can compose the same core with their own router/main.
+
+func handle(req) (res) {
+    if req.path == "/" { return ok_html(landing_html()) }
+    if has_prefix(req.path, "/llms.txt") {
+        res = ok_text(llms_txt())
+        return res
+    }
+    if req.method == "POST" {
+        if has_prefix(req.path, "/api/event") { return handle_event(req) }
+        if has_prefix(req.path, "/api/sites") { return handle_site_add(req) }
+    }
+    if has_prefix(req.path, "/api/stats/") { return handle_stats(req) }
+    if has_prefix(req.path, "/api/sessions") { return handle_sessions(req) }
+    if has_prefix(req.path, "/api/snapshot") { return handle_snapshot(req) }
+    if has_prefix(req.path, "/globe") { return handle_globe(req) }
+    if has_prefix(req.path, "/vigie.js") {
+        res = ok_text(snippet_js())
+        res.ctype = "application/javascript"
+        res = with_header(res, "Cache-Control", "public, max-age=300")
+        return res
+    }
+    if has_prefix(req.path, "/_health") { return ok_json("{\"status\":\"ok\",\"service\":\"vigie\",\"version\":\"" + vigie_version() + "\"}") }
+    res = not_found()
+}
+
+
+func main() {
+    a := args()
+    if len(a) < 2 { fail(80, "usage: vigie serve|site|stats|track|version", "run: vigie guide") }
+    cmd := a[1]
+    if cmd == "serve" { cmd_serve() }
+    if cmd == "site" { cmd_site() }
+    if cmd == "stats" { cmd_stats() }
+    if cmd == "track" { cmd_track() }
+    if cmd == "prune" { cmd_prune() }
+    if cmd == "globe" { cmd_globe_url() }
+    if cmd == "sessions" { cmd_sessions() }
+    if cmd == "goal" { cmd_goal() }
+    if cmd == "funnel" { cmd_funnel() }
+    if cmd == "snapshot" { cmd_snapshot() }
+    if cmd == "guide" { cmd_guide() }
+    if cmd == "help-json" { cmd_help_json() }
+    if cmd == "help" { cmd_help_json() }
+    if cmd == "feedback" { cmd_feedback() }
+    if cmd == "update" { cmd_update() }
+    if cmd == "version" { emit("{\"version\":\"" + vigie_version() + "\"}") }
+}
