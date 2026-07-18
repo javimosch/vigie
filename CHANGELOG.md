@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.4.2 — 2026-07-18
+
+- **The war-room:** `GET /globe?site=&key=` — vigie serves the live globe itself; the page polls its own `/api/stats/live` every 5s (same-origin, no hart-CSP constraints). Sub-10s latency from a visitor landing to the pulse.
+- **Per-site read keys:** the previously-unused `sites.site_key` is now a scoped, revocable READ credential — valid for `/api/stats/live` and `/globe` on its one site only (aggregate counts; never sessions/paths beyond top-5). `vigie site key --site d` shows it, `site rotate-key` revokes. The hart artifact stays the shareable 60s version; `/globe` is the one you watch.
+
 ## v0.4.1 — 2026-07-18
 
 - Globe: **drag to pan** (pointer events, touch included) — grabbing the planet stops the auto-rotation; double-click resumes the spin
