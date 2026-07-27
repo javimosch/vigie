@@ -4,7 +4,7 @@
 
 // ---------- constants ----------
 
-func vigie_version() (v) { v = "0.9.0" }
+func vigie_version() (v) { v = "0.9.1" }
 func session_window() (s) { s = 1800 }
 
 // ---------- CLI arg helpers ----------
@@ -62,8 +62,44 @@ func hesc(s) (o) {
     o = replace(o, "'", "&#39;")
 }
 
+// err_type / err_recoverable — derive the typed fields from the exit code, so the two can
+// never disagree. The ranges are the ones `vigie guide` already documents.
+// usage_line — every verb, not a stale subset. The old string advertised
+// "serve|site|stats|track|version": 5 of 18, omitting guide, help-json, feedback and update —
+// exactly the verbs an agent needs to orient itself.
+func usage_line() (u) {
+    u = "usage: vigie serve|site|stats|track|prune|globe|report|sessions|users|goal|funnel|snapshot|guide|help-json|feedback|update|version"
+}
+
+func err_type(code) (t) {
+    t = "internal"
+    if code >= 80 && code <= 89 { t = "input" }
+    if code >= 90 && code <= 99 { t = "resource" }
+    if code >= 100 && code <= 109 { t = "integration" }
+    if code >= 110 && code <= 119 { t = "internal" }
+}
+
+// An internal error is a bug in vigie: retrying the same call cannot help. Everything else
+// is something the caller can act on — fix the input, create the resource, retry the network.
+func err_recoverable(code) (r) {
+    r = "true"
+    if code >= 110 && code <= 119 { r = "false" }
+}
+
+// fail — the single error exit. Emits the typed object the CLI output spec requires
+// (code / type / message / recoverable / suggestions) so an agent can branch on the TYPE
+// and know whether a retry is worth attempting, instead of pattern-matching prose.
+//
+// Both strings are JSON-escaped: they were interpolated raw before, so any message
+// containing a quote produced invalid JSON — precisely when a parser is least able to cope.
 func fail(code, msg, hint) {
-    write(2, "{\"ok\":false,\"error\":\"" + msg + "\",\"hint\":\"" + hint + "\"}\n")
+    sug := "[]"
+    if hint != "" { sug = "[" + json(hint) + "]" }
+    write(2, "{\"ok\":false,\"error\":{\"code\":" + str(code) +
+      ",\"type\":" + json(err_type(code)) +
+      ",\"message\":" + json(msg) +
+      ",\"recoverable\":" + err_recoverable(code) +
+      ",\"suggestions\":" + sug + "}}\n")
     exit(code)
 }
 
@@ -514,6 +550,46 @@ func cmd_report_url() {
 }
 
 // POST /api/sites?domain= — register a site remotely
+// handle_feedback — POST /feedback. The app owning its own feedback is half of the dual
+// write; the other half is the central relay the CLI posts to.
+//
+// Open to submit on purpose: an agent that hits a wall must be able to report it without a
+// credential it does not have. Reads are admin-gated (authed), because the messages are
+// other people's words. Stored, never forwarded from here — the CLI already relays.
+func handle_feedback(req) (res) {
+    db := db_open()
+    db_init(db)
+    sqlite_exec(db, "CREATE TABLE IF NOT EXISTS feedback(id TEXT PRIMARY KEY, app TEXT, version TEXT, kind TEXT, message TEXT, context TEXT, reporter TEXT, ts INTEGER)", []string{})
+    body := req.body
+    msg := jstr_of(body, "message")
+    if msg == "" {
+        sqlite_close(db)
+        return bad_request("{\"ok\":false,\"error\":{\"code\":80,\"type\":\"input\",\"message\":\"missing message\",\"recoverable\":true,\"suggestions\":[\"POST {\\\"message\\\":\\\"...\\\"}\"]}}")
+    }
+    id := jstr_of(body, "id")
+    if id == "" { id = feedback_id(jstr_of(body, "app"), jstr_of(body, "kind"), msg, jstr_of(body, "context"), jstr_of(body, "reporter")) }
+    // INSERT OR IGNORE, keyed on the caller's idempotency id: a retried delivery of the same
+    // report must not create a second row.
+    sqlite_exec(db, "INSERT OR IGNORE INTO feedback(id, app, version, kind, message, context, reporter, ts) VALUES(?,?,?,?,?,?,?,?)",
+        []string{id, jstr_of(body, "app"), jstr_of(body, "version"), jstr_of(body, "kind"), msg, jstr_of(body, "context"), jstr_of(body, "reporter"), str(now())})
+    sqlite_close(db)
+    res = ok_json("{\"ok\":true,\"data\":{\"id\":\"" + jesc(id) + "\",\"stored\":true}}")
+}
+
+// jstr_of — a top-level string field of a JSON body, "" when absent.
+func jstr_of(body, key) (v) {
+    v = ""
+    raw, e := json_get(body, "." + key)
+    if e == "" { v = raw }
+}
+
+// feedback_id — the idempotency key, DERIVED FROM CONTENT rather than random. A random id
+// makes both writes agree within a single invocation but leaves retries duplicating, which
+// is the one thing an idempotency key exists to prevent.
+func feedback_id(app, kind, msg, ctx, reporter) (id) {
+    id = substr(sha256(app + "|" + kind + "|" + msg + "|" + ctx + "|" + reporter), 0, 12)
+}
+
 func handle_site_add(req) (res) {
     if authed(req) == 0 { return forbidden() }
     domain := query(req, "domain")
@@ -533,7 +609,7 @@ func handle_site_add(req) (res) {
 
 func llms_txt() (s) {
     s = "# vigie\n\nAgent-first, cookieless web analytics in one static binary. No dashboard: JSON verbs for agents, on-demand hart-published HTML snapshots (and a living globe) for humans.\n\n"
-    s = s + "- Repo: https://github.com/javimosch/vigie (MIT)\n- Docs: https://javimosch.github.io/vigie/\n- Binary: https://github.com/javimosch/vigie/releases/latest/download/vigie\n- Manual: run `vigie guide` (embedded, version-exact). Catalog: `vigie help-json`.\n- CLI contract: https://cli-specs.intrane.fr/\n\n"
+    s = s + "- Repo: https://github.com/javimosch/vigie (MIT)\n- Docs: https://javimosch.github.io/vigie/\n- Binary: https://github.com/javimosch/vigie/releases/latest/download/vigie\n- Manual: GET /guide (this instance) or run `vigie guide` — identical bytes, version-exact.\n- Catalog: GET /help-json or `vigie help-json`.\n- Feedback: POST /feedback {message,kind,context} — open, content-deduped.\n- CLI contract: https://cli-specs.intrane.fr/\n\n"
     s = s + "This instance:\n- POST /api/event — ingest {site,t:pageview|event|vital|error,name,path,ref,q,props,uid,v} (open; 404 for unregistered sites)\n- GET /vigie.js — the ~2KB tracking snippet (SPA tracking, custom events, identify, web vitals, error capture)\n- GET /_health — liveness\n- GET /api/stats/<dim>?site=&since=... — overview|timeseries|live|goals|retention|vitals|errors|journeys|channels|heatmap|event-props|pages|entry-pages|exit-pages|referrers|countries|devices|browsers|events|utm-* (Bearer VIGIE_ADMIN_TOKEN)\n- GET /api/sessions?site=[&sid=] — session explorer (Bearer)\n- GET /api/snapshot?site= — HTML dashboard (Bearer)\n- POST /api/sites?domain= — register a site (Bearer)\n\n"
     s = s + "Snippet: <script defer src=\"https://" + "vigie.intrane.fr" + "/vigie.js\" data-site=\"your-domain\"></script>\n"
 }
@@ -659,12 +735,20 @@ func cmd_serve() {
     db_init(db)
     sqlite_close(db)
     write(2, "{\"msg\":\"vigie listening\",\"port\":" + str(port) + ",\"db\":\"" + db_path() + "\"}\n")
+    update_nudge()
     serve(port, func(req) { return handle(req) })
 }
 
 func cmd_site() {
     a := args()
     if len(a) < 3 { fail(80, "usage: vigie site add|list", "vigie site add example.com") }
+    // Reject an unrecognised subcommand up front. Each `if a[2] == ...` block below
+    // emits and RETURNS rather than exiting, so a trailing check would fire after a
+    // valid subcommand too; guarding here keeps the existing flow untouched. Without
+    // it, `vigie site <typo>` exited 0 with no output — silent success.
+    if a[2] != "add" && a[2] != "list" && a[2] != "key" && a[2] != "rotate-key" {
+        fail(80, "unknown subcommand: site " + a[2], "vigie site add|list|key|rotate-key")
+    }
     db := db_open()
     db_init(db)
     if a[2] == "add" {
@@ -834,6 +918,13 @@ func cmd_globe_url() {
 func cmd_sessions() {
     a := args()
     if len(a) < 3 { fail(80, "usage: vigie sessions list|show --site <domain> [--since 24h] [--limit 20] [--sid <id>]", "") }
+    // Reject an unrecognised subcommand up front. Each `if a[2] == ...` block below
+    // emits and RETURNS rather than exiting, so a trailing check would fire after a
+    // valid subcommand too; guarding here keeps the existing flow untouched. Without
+    // it, `vigie sessions <typo>` exited 0 with no output — silent success.
+    if a[2] != "list" && a[2] != "show" {
+        fail(80, "unknown subcommand: sessions " + a[2], "vigie sessions list|show")
+    }
     site := argval("--site", "")
     if site == "" { fail(80, "missing --site", "") }
     db := db_open()
@@ -914,6 +1005,13 @@ func goal_clause(kind, matcher) (clause, param) {
 func cmd_goal() {
     a := args()
     if len(a) < 3 { fail(80, "usage: vigie goal add|list|rm", "vigie goal add --site s --name signup --kind event --match signup") }
+    // Reject an unrecognised subcommand up front. Each `if a[2] == ...` block below
+    // emits and RETURNS rather than exiting, so a trailing check would fire after a
+    // valid subcommand too; guarding here keeps the existing flow untouched. Without
+    // it, `vigie goal <typo>` exited 0 with no output — silent success.
+    if a[2] != "add" && a[2] != "list" && a[2] != "rm" {
+        fail(80, "unknown subcommand: goal " + a[2], "vigie goal add|list|rm")
+    }
     site := argval("--site", "")
     if site == "" { fail(80, "missing --site", "") }
     db := db_open()
@@ -1063,6 +1161,13 @@ func user_show_json(db, site, uid) (j) {
 func cmd_users() {
     a := args()
     if len(a) < 3 { fail(80, "usage: vigie users list|show --site <domain> [--since 30d] [--limit 20] [--uid <id>]", "") }
+    // Reject an unrecognised subcommand up front. Each `if a[2] == ...` block below
+    // emits and RETURNS rather than exiting, so a trailing check would fire after a
+    // valid subcommand too; guarding here keeps the existing flow untouched. Without
+    // it, `vigie users <typo>` exited 0 with no output — silent success.
+    if a[2] != "list" && a[2] != "show" {
+        fail(80, "unknown subcommand: users " + a[2], "vigie users list|show")
+    }
     site := argval("--site", "")
     if site == "" { fail(80, "missing --site", "") }
     db := db_open()
@@ -1244,6 +1349,13 @@ func funnel_counts(db, site, since, steps) (counts) {
 func cmd_funnel() {
     a := args()
     if len(a) < 3 { fail(80, "usage: vigie funnel add|list|rm|show", "vigie funnel add --site s --name onboard --steps '/,signup,/done'") }
+    // Reject an unrecognised subcommand up front. Each `if a[2] == ...` block below
+    // emits and RETURNS rather than exiting, so a trailing check would fire after a
+    // valid subcommand too; guarding here keeps the existing flow untouched. Without
+    // it, `vigie funnel <typo>` exited 0 with no output — silent success.
+    if a[2] != "add" && a[2] != "list" && a[2] != "rm" && a[2] != "show" {
+        fail(80, "unknown subcommand: funnel " + a[2], "vigie funnel add|list|rm|show")
+    }
     site := argval("--site", "")
     if site == "" { fail(80, "missing --site", "") }
     db := db_open()
@@ -1581,9 +1693,11 @@ func cmd_snapshot() {
 
 // ---------- cli-specs verbs: guide · help-json · feedback · update ----------
 
-func cmd_guide() {
+// guide_json builds the manual; cmd_guide prints it and the /guide route serves it, so the
+// CLI and an HTTP-only agent can never be told different things.
+func guide_json() (g) {
     v := vigie_version()
-    g := "{\"schema\":\"vigie.guide/v1\",\"version\":\"" + v + "\","
+    g = "{\"schema\":\"vigie.guide/v1\",\"version\":\"" + v + "\","
     g = g + "\"tagline\":\"agent-first, cookieless web analytics in one static binary — no dashboard, JSON verbs + on-demand hart snapshots\","
     g = g + "\"model\":{\"what\":\"POST /api/event ingests pageviews/custom events (browser snippet or server-side). Visitors are a daily-rotating salted hash of IP+UA — no cookies, no consent banner, raw IP never stored. Sessions stitch events within a 30-min window. Everything is queried via `vigie stats *` returning JSON on stdout.\",\"storage\":\"SQLite (WAL), one file, indexes on (site,ts) and (site,vid,ts). Prune with `vigie prune`.\",\"server_side\":\"agents/backends are first-class tracked users: `vigie track --site s --name deploy --actor ci` or POST /api/event with no browser.\"},"
     g = g + "\"quickstart\":[\"vigie site add example.com\",\"vigie serve --port 8090 --db vigie.db\",\"add <script defer src=\\\"https://your-host/vigie.js\\\" data-site=\\\"example.com\\\"></script> to your pages\",\"vigie stats overview --site example.com --since 7d\"],"
@@ -1594,10 +1708,14 @@ func cmd_guide() {
     g = g + "\"sessions_retention_vitals_errors\":\"`vigie sessions list/show` = per-session rollups + ordered event trail. Retention cohorts need IDENTIFIED users: the daily-rotating visitor hash cannot follow a person across days (privacy by design), so call window.vigie.identify('user-id') in the browser or pass --uid/--actor on `vigie track`; `vigie stats retention` then computes weekly cohorts over uid. The snippet auto-collects web vitals (LCP/FCP/CLS/INP/TTFB, sent on pagehide; CLS is scaled x1000) -> `vigie stats vitals` (p50/p75/p90), and auto-captures JS errors + unhandled rejections (max 5/page) -> `vigie stats errors` (grouped by message).\","
     g = g + "\"gotchas\":[\"stats timeseries buckets are sparse — missing buckets mean zero, zero-fill client-side\",\"visitor counts across >1 day dedupe per-day (the hash rotates) — trend-accurate, not absolute uniques; use identify() for durable identity\",\"server-side events have device=browser=server\",\"the ingest endpoint answers 404 for sites you have not added — add them first\",\"vitals arrive on pagehide, so a tab that never hides sends none\"],"
     g = g + "\"exit_codes\":{\"0\":\"ok\",\"80-89\":\"input/validation\",\"90-99\":\"resource (not found/exists)\",\"100-109\":\"integration (network/db)\",\"110-119\":\"internal\"}}"
-    println(g)
 }
 
-func cmd_help_json() {
+func cmd_guide() {
+    println(guide_json())
+}
+
+// help_json is the machine-readable command catalog; served over HTTP as well as printed.
+func help_json() (h) {
     v := vigie_version()
     h := "{\"schema\":\"vigie.help/v1\",\"version\":\"" + v + "\",\"stdout\":\"data only (JSON)\",\"stderr\":\"context only\",\"commands\":["
     h = h + "{\"name\":\"serve\",\"usage\":\"vigie serve [--port 8090] [--db vigie.db]\",\"summary\":\"run the ingest+snippet HTTP server\"},"
@@ -1618,7 +1736,10 @@ func cmd_help_json() {
     h = h + "{\"name\":\"update\",\"usage\":\"vigie update [--check]\",\"summary\":\"self-update from GitHub releases (sha256-verified, atomic, .bak rollback)\"},"
     h = h + "{\"name\":\"version\",\"usage\":\"vigie version\",\"summary\":\"print the version\"}"
     h = h + "]}"
-    println(h)
+}
+
+func cmd_help_json() {
+    println(help_json())
 }
 
 func post_json(url, payload) (ok) {
@@ -1631,15 +1752,21 @@ func cmd_feedback() {
     a := args()
     if len(a) < 3 { fail(80, "usage: vigie feedback <message> [--kind bug|idea|praise] [--context c]", "") }
     msg := a[2]
-    id := to_hex(rand_bytes(6))
     rep := env("USER")
     if rep == "" { rep = "agent" }
+    // Content-derived, so re-reporting the same thing dedupes instead of piling up.
+    id := feedback_id("vigie", argval("--kind", "note"), msg, argval("--context", ""), rep)
     payload := "{\"app\":\"vigie\",\"version\":\"" + vigie_version() + "\",\"kind\":\"" + jesc(argval("--kind", "note")) + "\",\"message\":\"" + jesc(msg) + "\",\"context\":\"" + jesc(argval("--context", "")) + "\",\"reporter\":\"" + jesc(rep) + "\",\"id\":\"" + id + "\"}"
     relay := env("FEEDBACK_RELAY")
     if relay == "" { relay = "https://feedback.intrane.fr" }
     relayed := 0
     if relay != "off" { relayed = post_json(relay + "/v1/feedback", payload) }
+    // Default to this instance's own endpoint so the "each app owns its feedback" half works
+    // out of the box; VIGIE_FEEDBACK_URL points it elsewhere, "off" disables it.
     own := env("VIGIE_FEEDBACK_URL")
+    if own == "" { own = env("VIGIE_BASE_URL") + "/feedback" }
+    if own == "/feedback" { own = "" }
+    if own == "off" { own = "" }
     stored := 0
     if own != "" { stored = post_json(own, payload) }
     rl := "false"
@@ -1666,6 +1793,35 @@ func self_path() (p) {
         r2 := trim(out2)
         if r2 != "" { p = r2 }
     }
+}
+
+// update_nudge — a passive line on stderr when a newer build exists, printed once at server
+// start. Deliberately: stderr not stdout (it is context, never data), non-blocking and
+// best-effort (a network hiccup must not delay or break `serve`), throttled to at most once
+// per NUDGE_EVERY seconds via a stamp file so a restart loop cannot hammer the release host,
+// and never automatic — it tells the operator, it does not self-update a running server.
+// Off entirely with VIGIE_NO_UPDATE_CHECK=1.
+func update_nudge() {
+    if env("VIGIE_NO_UPDATE_CHECK") == "1" { return }
+    stamp := "/tmp/.vigie-update-check"
+    last := 0
+    prev := read_file(stamp)
+    if prev != "" { last = parse_int(trim(prev)) }
+    if now() - last < 86400 { return }
+    write_file(stamp, str(now()))
+
+    base := env("VIGIE_UPDATE_URL")
+    if base == "" { base = "https://github.com/javimosch/vigie/releases/latest/download" }
+    tmpsha := "/tmp/vigie-nudge-" + to_hex(rand_bytes(4))
+    rc := system("curl -fsSL --max-time 4 '" + base + "/vigie.sha256' -o " + tmpsha + " 2>/dev/null")
+    if rc != 0 { remove(tmpsha)  return }
+    remote_sha := split(trim(read_file(tmpsha)), " ")[0]
+    remove(tmpsha)
+    if remote_sha == "" { return }
+    local_sha := to_hex(sha256_bytes(read_file_bytes(self_path())))
+    if local_sha == remote_sha { return }
+    write(2, "{\"msg\":\"a newer vigie is available\",\"have\":\"" + substr(local_sha, 0, 12) +
+      "\",\"latest\":\"" + substr(remote_sha, 0, 12) + "\",\"run\":\"vigie update\"}\n")
 }
 
 func cmd_update() {

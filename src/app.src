@@ -8,6 +8,16 @@ func handle(req) (res) {
         res = ok_text(llms_txt())
         return res
     }
+    // The CLI guide spec asks server-based tools to serve the manual over HTTP, not just
+    // from the binary: an agent that can reach an instance but has no copy of vigie could
+    // previously read /llms.txt, be told to "run `vigie guide`", and have no way to do it.
+    // Same bytes as the CLI verb, so the two can never drift.
+    if has_prefix(req.path, "/guide") { return ok_json(guide_json()) }
+    if has_prefix(req.path, "/help-json") { return ok_json(help_json()) }
+    // Feedback: the spec's dual-write needs the app to own an endpoint of its own, not only
+    // relay to a central inbox. Open to submit (an agent hitting a wall must be able to say
+    // so), and never fails the caller.
+    if req.method == "POST" && has_prefix(req.path, "/feedback") { return handle_feedback(req) }
     if req.method == "POST" {
         if has_prefix(req.path, "/api/event") { return handle_event(req) }
         if has_prefix(req.path, "/api/sites") { return handle_site_add(req) }
@@ -31,24 +41,35 @@ func handle(req) (res) {
 
 func main() {
     a := args()
-    if len(a) < 2 { fail(80, "usage: vigie serve|site|stats|track|version", "run: vigie guide") }
+    if len(a) < 2 { fail(80, usage_line(), "run: vigie guide") }
     cmd := a[1]
-    if cmd == "serve" { cmd_serve() }
-    if cmd == "site" { cmd_site() }
-    if cmd == "stats" { cmd_stats() }
-    if cmd == "track" { cmd_track() }
-    if cmd == "prune" { cmd_prune() }
-    if cmd == "globe" { cmd_globe_url() }
-    if cmd == "report" { cmd_report_url() }
-    if cmd == "sessions" { cmd_sessions() }
-    if cmd == "users" { cmd_users() }
-    if cmd == "goal" { cmd_goal() }
-    if cmd == "funnel" { cmd_funnel() }
-    if cmd == "snapshot" { cmd_snapshot() }
-    if cmd == "guide" { cmd_guide() }
-    if cmd == "help-json" { cmd_help_json() }
-    if cmd == "help" { cmd_help_json() }
-    if cmd == "feedback" { cmd_feedback() }
-    if cmd == "update" { cmd_update() }
-    if cmd == "version" { emit("{\"version\":\"" + vigie_version() + "\"}") }
+    // `handled` rather than a bare fallthrough: the command functions EMIT and RETURN, they
+    // do not exit, so an unconditional fail() at the end would fire after every SUCCESSFUL
+    // command. Tracking the match is what lets an unknown verb fail closed while a known one
+    // still exits 0.
+    handled := 1
+    if cmd == "serve" { cmd_serve() } else {
+    if cmd == "site" { cmd_site() } else {
+    if cmd == "stats" { cmd_stats() } else {
+    if cmd == "track" { cmd_track() } else {
+    if cmd == "prune" { cmd_prune() } else {
+    if cmd == "globe" { cmd_globe_url() } else {
+    if cmd == "report" { cmd_report_url() } else {
+    if cmd == "sessions" { cmd_sessions() } else {
+    if cmd == "users" { cmd_users() } else {
+    if cmd == "goal" { cmd_goal() } else {
+    if cmd == "funnel" { cmd_funnel() } else {
+    if cmd == "snapshot" { cmd_snapshot() } else {
+    if cmd == "guide" { cmd_guide() } else {
+    if cmd == "help-json" { cmd_help_json() } else {
+    if cmd == "help" { cmd_help_json() } else {
+    if cmd == "feedback" { cmd_feedback() } else {
+    if cmd == "update" { cmd_update() } else {
+    if cmd == "version" { emit("{\"version\":\"" + vigie_version() + "\"}") } else {
+        handled = 0
+    }}}}}}}}}}}}}}}}}}
+    // A verb that matched nothing used to run off the end of main() and exit 0 with no output
+    // at all — a typo was indistinguishable from success, which for an agent is the worst
+    // possible failure mode.
+    if handled == 0 { fail(80, "unknown command: " + cmd, "run: vigie help-json") }
 }

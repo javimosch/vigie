@@ -123,6 +123,44 @@ t "snippet falls back to pathname" "po||location.pathname" "$(curl -s $B/vigie.j
 curl -s -X POST $B/api/event -H "User-Agent: $UA1" -d '{"site":"t.test","t":"pageview","name":"","path":"/app-two","ref":"","q":"","props":"","uid":"","v":"","scr":"","lang":""}' >/dev/null
 t "explicit path is recorded" "/app-two" "$(curl -s -H "Authorization: Bearer tok" "$B/api/stats/pages?site=t.test&since=1h")"
 
+# ---- agent-first CLI spec compliance (cli-specs.intrane.fr) ----
+
+# 1. an unknown verb must FAIL CLOSED. It used to exit 0 with no output at all, so a typo was
+#    indistinguishable from success — the worst possible outcome for a caller that is a program.
+$BIN totally-made-up >/tmp/vg_o 2>/tmp/vg_e; t "unknown verb exits 80" "80" "$?"
+t "unknown verb is silent on stdout" "" "$(cat /tmp/vg_o)"
+t "unknown verb explains itself" "unknown command" "$(cat /tmp/vg_e)"
+$BIN site bogus-sub --db $DB >/tmp/vg_o 2>/tmp/vg_e; t "unknown SUBcommand exits 80" "80" "$?"
+t "unknown subcommand named" "unknown subcommand: site" "$(cat /tmp/vg_e)"
+$BIN site list --db $DB >/dev/null 2>&1; t "valid subcommand still exits 0" "0" "$?"
+
+# 2. typed error objects: an agent must be able to branch on TYPE and know whether to retry,
+#    rather than pattern-matching prose.
+E="$($BIN stats overview --db $DB 2>&1 >/dev/null)"
+t "error has code"        '"code":80'          "$E"
+t "error has type"        '"type":"input"'     "$E"
+t "error has recoverable" '"recoverable":true' "$E"
+t "error has suggestions" '"suggestions":['    "$E"
+# a DIFFERENT code range must yield a different type — proving type is derived from the code
+# rather than hardcoded to "input".
+E90="$($BIN site key --site definitely-not-a-site --db $DB 2>&1 >/dev/null)"
+t "resource error typed"      '"type":"resource"' "$E90"
+t "resource error code"       '"code":90'         "$E90"
+$BIN site key --site definitely-not-a-site --db $DB >/dev/null 2>&1; t "resource error exits 90" "90" "$?"
+
+# 3. the manual is reachable over HTTP, not only from the binary
+t "GET /guide 200"     '"schema":"vigie.guide/v1"' "$(curl -s $B/guide)"
+t "GET /help-json 200" '"schema":"vigie.help/v1"'  "$(curl -s $B/help-json)"
+t "llms.txt points at a path that resolves" "GET /guide" "$(curl -s $B/llms.txt)"
+
+# 4+5. the app owns its feedback, and the id is an idempotency key: posting the same content
+#      twice must yield the SAME id and exactly ONE row.
+F1="$(curl -s -X POST $B/feedback -H 'content-type: application/json' -d '{"app":"vigie","kind":"idea","message":"idem-check","context":"","reporter":"t"}')"
+F2="$(curl -s -X POST $B/feedback -H 'content-type: application/json' -d '{"app":"vigie","kind":"idea","message":"idem-check","context":"","reporter":"t"}')"
+t "feedback stored locally" '"stored":true' "$F1"
+t "same content -> same id" "$(printf '%s' "$F1" | grep -o '"id":"[a-f0-9]*"')" "$F2"
+t "feedback missing message 400" "400" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $B/feedback -H 'content-type: application/json' -d '{}')"
+
 echo
 echo "PASS=$PASS FAIL=$FAIL"
 if [[ $FAIL -gt 0 ]]; then printf 'FAILED: %s\n' "${FAILED[@]}"; exit 1; fi

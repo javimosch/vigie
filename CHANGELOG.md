@@ -1,5 +1,52 @@
 # Changelog
 
+## v0.9.1 — 2026-07-27
+
+Full compliance with the four [agent-first CLI specs](https://blog.intrane.fr/agent-first-cli-specs).
+An audit against them found five gaps; all are closed.
+
+**Output contract**
+
+- 🔴 **An unknown verb exited 0 with no output.** `vigie some-typo` and `vigie site some-typo`
+  produced nothing on either stream and returned success, so a typo was indistinguishable
+  from a working command — the worst failure mode for a caller that is a program. `main()`
+  was a flat chain of `if cmd == …` with no else, so an unmatched verb simply ran off the
+  end. Both the top level and all five sub-dispatchers (`site`, `goal`, `funnel`,
+  `sessions`, `users`) now fail closed with exit 80.
+- **Errors are now typed objects**: `{code, type, message, recoverable, suggestions}` instead
+  of `{error, hint}`. `type` and `recoverable` are derived from the exit code so they can
+  never disagree with it, and an agent can branch on the kind of failure and know whether a
+  retry can help. Both strings are now JSON-escaped — a message containing a quote used to
+  emit invalid JSON, exactly when a parser is least able to cope.
+- The usage line lists all 18 verbs; it advertised 5, omitting `guide`, `help-json`,
+  `feedback` and `update` — the very verbs an agent needs to orient itself.
+
+**Guide**
+
+- **`GET /guide` and `GET /help-json`** are served, byte-identical to the CLI verbs. An agent
+  that could reach an instance but had no copy of the binary was previously told by
+  `/llms.txt` to "run `vigie guide`" with no way to do so. `/llms.txt` now points at paths
+  that resolve.
+
+**Feedback**
+
+- **`POST /feedback`** — the app owns its own feedback, which is half of the dual-write. It
+  was relay-only, so every call reported `stored:false` unless you set an env var. Open to
+  submit (an agent hitting a wall must be able to say so without a credential), reads gated.
+- **The id is now an idempotency key derived from content**, not `rand_bytes(6)`. A random id
+  made both writes agree within one invocation but left retries duplicating — the one thing
+  an idempotency key exists to prevent. Same report twice → same id, one row.
+
+**Update**
+
+- **A passive nudge on `serve`**: one stderr line when a newer build exists. Throttled to
+  once a day via a stamp file, best-effort with a 4s timeout so a network hiccup cannot delay
+  startup, never automatic, and disabled by `VIGIE_NO_UPDATE_CHECK=1`.
+
+Suite 102 → **121 tests**, including a mutation check that the new tests genuinely fail when
+the fixes are reverted.
+
+
 ## v0.9.0 — 2026-07-27
 
 ### Security: stored XSS in the server-rendered `/report` (please upgrade)
