@@ -4,7 +4,7 @@
 
 // ---------- constants ----------
 
-func vigie_version() (v) { v = "0.8.2" }
+func vigie_version() (v) { v = "0.9.0" }
 func session_window() (s) { s = 1800 }
 
 // ---------- CLI arg helpers ----------
@@ -40,6 +40,26 @@ func jesc(s) (o) {
     o = replace(s, "\\", "\\\\")
     o = replace(o, "\"", "\\\"")
     o = replace(o, "\n", "\\n")
+}
+
+// hesc — HTML-escape a string destined for an HTML document.
+//
+// SECURITY: every dimension value in a report is attacker-controlled. Ingest is open by
+// design, so anyone who knows a site name can POST an event whose path/referrer/goal name
+// contains markup. It is then rendered into /report and /globe, which the site OWNER opens
+// with their per-site read key IN THE URL — so an injected script runs on the vigie origin
+// and can read that key straight out of location.search.
+//
+// jesc() is NOT a substitute: it escapes for JSON string literals (quotes, backslashes,
+// newlines) and leaves "<script>" completely intact. Several call sites used it and were
+// therefore still vulnerable. Ampersand must be replaced FIRST or the other replacements
+// get double-escaped.
+func hesc(s) (o) {
+    o = replace(s, "&", "&amp;")
+    o = replace(o, "<", "&lt;")
+    o = replace(o, ">", "&gt;")
+    o = replace(o, "\"", "&quot;")
+    o = replace(o, "'", "&#39;")
 }
 
 func fail(code, msg, hint) {
@@ -261,8 +281,15 @@ func handle_event(req) (res) {
 }
 
 func snippet_js() (s) {
-    s = "(function(){var s=document.currentScript;var ep=new URL('api/event',s.src).href;var site=s.getAttribute('data-site')||location.hostname;var uid='';var ec=0;"
-    s = s + "function send(t,n,p,v){var b=JSON.stringify({site:site,t:t,name:n,path:location.pathname,ref:document.referrer,q:location.search,props:p?JSON.stringify(p):'',uid:uid,v:v?String(v):'',scr:screen.width+'x'+screen.height,lang:(navigator.language||'').slice(0,5)});if(navigator.sendBeacon){navigator.sendBeacon(ep,b)}else{var x=new XMLHttpRequest();x.open('POST',ep,true);x.send(b)}}"
+    // data-path overrides the reported path. Needed for a product FAMILY spread across many
+    // domains that each serve one page at "/": without it you must either create a site per
+    // domain (and lose family-wide funnels) or put everything in one site where every event
+    // has path "/" and the apps are indistinguishable. With it, one site key plus
+    // data-path="/<app>" gives per-app breakdown through the existing paths report.
+    // Falls back to location.pathname, so existing snippets are unaffected.
+    s = "(function(){var s=document.currentScript;var ep=new URL('api/event',s.src).href;var site=s.getAttribute('data-site')||location.hostname;var po=s.getAttribute('data-path')||'';var uid='';var ec=0;"
+    s = s + "function pth(){return po||location.pathname}"
+    s = s + "function send(t,n,p,v){var b=JSON.stringify({site:site,t:t,name:n,path:pth(),ref:document.referrer,q:location.search,props:p?JSON.stringify(p):'',uid:uid,v:v?String(v):'',scr:screen.width+'x'+screen.height,lang:(navigator.language||'').slice(0,5)});if(navigator.sendBeacon){navigator.sendBeacon(ep,b)}else{var x=new XMLHttpRequest();x.open('POST',ep,true);x.send(b)}}"
     s = s + "send('pageview','');"
     s = s + "var h=history.pushState;history.pushState=function(){h.apply(this,arguments);send('pageview','')};"
     s = s + "addEventListener('popstate',function(){send('pageview','')});"
@@ -1287,7 +1314,7 @@ func snap_table(db, title, dim, site, since) (h) {
     for _, r := range rows {
         v := r.value
         if v == "" { v = "(none)" }
-        h = h + "<tr><td>" + v + "</td><td>" + str(r.hits) + "</td><td>" + str(r.visitors) + "</td></tr>"
+        h = h + "<tr><td>" + hesc(v) + "</td><td>" + str(r.hits) + "</td><td>" + str(r.visitors) + "</td></tr>"
     }
     h = h + "</table></div>"
 }
@@ -1308,7 +1335,7 @@ func snap_vitals(db, site, since) (h) {
     rows := parse(vj, []VitRow{})
     h = "<div class='card'><h2>Web vitals</h2><table><tr><th></th><th>p50</th><th>p75</th><th>p90</th></tr>"
     for _, r := range rows {
-        h = h + "<tr><td>" + r.metric + " <span class='muted'>(" + r.unit + ", n=" + str(r.samples) + ")</span></td><td>" + str(r.p50) + "</td><td>" + str(r.p75) + "</td><td>" + str(r.p90) + "</td></tr>"
+        h = h + "<tr><td>" + hesc(r.metric) + " <span class='muted'>(" + r.unit + ", n=" + str(r.samples) + ")</span></td><td>" + str(r.p50) + "</td><td>" + str(r.p75) + "</td><td>" + str(r.p90) + "</td></tr>"
     }
     h = h + "</table></div>"
 }
@@ -1327,7 +1354,7 @@ func snap_errors(db, site, since) (h) {
     rows := parse(ej, []ErrRow{})
     h = "<div class='card wide'><h2>JS errors</h2><table><tr><th></th><th>hits</th><th>sessions</th></tr>"
     for _, r := range rows {
-        h = h + "<tr><td>" + jesc(r.message) + "</td><td>" + str(r.hits) + "</td><td>" + str(r.sessions_hit) + "</td></tr>"
+        h = h + "<tr><td>" + hesc(r.message) + "</td><td>" + str(r.hits) + "</td><td>" + str(r.sessions_hit) + "</td></tr>"
     }
     h = h + "</table></div>"
 }
@@ -1346,7 +1373,7 @@ func snap_goals(db, site, since) (h) {
     rows := parse(gj, []GoalOut{})
     h = "<div class='card'><h2>Goals</h2><table><tr><th></th><th>conv</th><th>rate</th></tr>"
     for _, r := range rows {
-        h = h + "<tr><td>" + jesc(r.goal) + "</td><td>" + str(r.conversions) + "</td><td>" + str(r.rate_pct) + "%</td></tr>"
+        h = h + "<tr><td>" + hesc(r.goal) + "</td><td>" + str(r.conversions) + "</td><td>" + str(r.rate_pct) + "%</td></tr>"
     }
     h = h + "</table></div>"
 }
@@ -1365,7 +1392,7 @@ func snap_journeys(db, site, since) (h) {
     if len(rows) == 0 { return h }
     h = "<div class='card wide'><h2>Top journeys</h2><table><tr><th></th><th>sessions</th></tr>"
     for _, r := range rows {
-        h = h + "<tr><td>" + jesc(r.seq) + "</td><td>" + str(r.sessions) + "</td></tr>"
+        h = h + "<tr><td>" + hesc(r.seq) + "</td><td>" + str(r.sessions) + "</td></tr>"
     }
     h = h + "</table></div>"
 }
@@ -1406,7 +1433,7 @@ func snap_edge(db, title, site, since, last) (h) {
     rows := parse(ej, []BreakRow{})
     h = "<div class='card'><h2>" + title + "</h2><table><tr><th></th><th>sessions</th><th>visitors</th></tr>"
     for _, r := range rows {
-        h = h + "<tr><td>" + jesc(r.value) + "</td><td>" + str(r.hits) + "</td><td>" + str(r.visitors) + "</td></tr>"
+        h = h + "<tr><td>" + hesc(r.value) + "</td><td>" + str(r.hits) + "</td><td>" + str(r.visitors) + "</td></tr>"
     }
     h = h + "</table></div>"
 }
@@ -1418,7 +1445,7 @@ func snap_props(db, site, since) (h) {
     rows := parse(pj, []BreakRow{})
     h = "<div class='card'><h2>Event properties</h2><table><tr><th></th><th>hits</th><th>visitors</th></tr>"
     for _, r := range rows {
-        h = h + "<tr><td>" + jesc(r.value) + "</td><td>" + str(r.hits) + "</td><td>" + str(r.visitors) + "</td></tr>"
+        h = h + "<tr><td>" + hesc(r.value) + "</td><td>" + str(r.hits) + "</td><td>" + str(r.visitors) + "</td></tr>"
     }
     h = h + "</table></div>"
 }

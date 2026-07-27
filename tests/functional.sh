@@ -96,9 +96,6 @@ t "cli stats after http" '"pageviews":2' "$($BIN stats overview --site t.test --
 t "cli sessions"   '"entry"'    "$($BIN sessions list --site t.test --since 1h --db $DB)"
 t "cli users show missing exit" "90" "$($BIN users show --site t.test --uid ghost --db $DB >/dev/null 2>&1; echo $?)"
 
-echo
-echo "PASS=$PASS FAIL=$FAIL"
-if [[ $FAIL -gt 0 ]]; then printf 'FAILED: %s\n' "${FAILED[@]}"; exit 1; fi
 
 # ---- adversarial ----
 t "malformed json body" "200 400" "200 400 $(curl -s -o /dev/null -w '%{http_code}' -X POST $B/api/event -d '{{{not-json')"
@@ -106,4 +103,26 @@ t "empty body"      "40"  "$(curl -s -o /dev/null -w '%{http_code}' -X POST $B/a
 t "sqli site param" '"ok":true' "$(curl -s -H "Authorization: Bearer tok" "$B/api/stats/overview?site=x%27%20OR%20%271%27%3D%271&since=1h")"
 t "sqli still alive" '"status":"ok"' "$(curl -s $B/_health)"
 t "huge props survives" "200" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $B/api/event -H "User-Agent: $UA1" -d "{\"site\":\"t.test\",\"t\":\"event\",\"name\":\"big\",\"path\":\"/\",\"ref\":\"\",\"q\":\"\",\"props\":\"$(printf 'x%.0s' {1..4000})\",\"uid\":\"\",\"v\":\"\",\"scr\":\"\",\"lang\":\"\"}")"
-t "xss path escaped in report" "no-script" "$(curl -s -X POST $B/api/event -H "User-Agent: $UA1" -d '{"site":"t.test","t":"pageview","name":"","path":"/<script>alert(1)</script>","ref":"","q":"","props":"","uid":"","v":"","scr":"","lang":""}' >/dev/null; curl -s "$B/report?site=t.test&key=$KEY2&since=1h" | grep -c '<script>alert(1)</script>' | sed 's/^0$/
+t "xss path escaped in report" "no-script" "$(curl -s -X POST $B/api/event -H "User-Agent: $UA1" -d '{"site":"t.test","t":"pageview","name":"","path":"/<script>alert(1)</script>","ref":"","q":"","props":"","uid":"","v":"","scr":"","lang":""}' >/dev/null; curl -s "$B/report?site=t.test&key=$KEY2&since=1h" | grep -c '<script>alert(1)</script>' | sed 's/^0$/no-script/')"
+
+# ---- stored XSS in the server-rendered report (regression) ----
+# Ingest is open, so any dimension value is attacker-controlled, and /report is opened by the
+# OWNER with their read key in the URL. jesc() used to be mistaken for an HTML escape here.
+curl -s -X POST $B/api/event -H "User-Agent: $UA1" -d '{"site":"t.test","t":"pageview","name":"","path":"/attr\" onmouseover=\"alert(1)","ref":"","q":"","props":"","uid":"","v":"","scr":"","lang":""}' >/dev/null
+curl -s -X POST $B/api/event -H "User-Agent: $UA1" -d '{"site":"t.test","t":"pageview","name":"","path":"/img><img src=x onerror=alert(2)>","ref":"","q":"","props":"","uid":"","v":"","scr":"","lang":""}' >/dev/null
+curl -s -X POST $B/api/event -H "User-Agent: $UA1" -d '{"site":"t.test","t":"event","name":"<b>goalname</b>","path":"/g","ref":"","q":"","props":"","uid":"","v":"","scr":"","lang":""}' >/dev/null
+REP="$(curl -s "$B/report?site=t.test&key=$KEY2&since=1h")"
+t "xss: no raw img tag"       "0" "$(printf '%s' "$REP" | grep -c '<img src=x')"
+t "xss: no raw attr break"    "0" "$(printf '%s' "$REP" | grep -c 'onmouseover=\"alert')"
+t "xss: no raw event-name tag" "0" "$(printf '%s' "$REP" | grep -c '<b>goalname</b>')"
+t "xss: value IS shown escaped" "&lt;img src=x" "$REP"
+
+# ---- data-path override (one site, many single-page domains) ----
+t "snippet exposes data-path" "data-path" "$(curl -s $B/vigie.js)"
+t "snippet falls back to pathname" "po||location.pathname" "$(curl -s $B/vigie.js)"
+curl -s -X POST $B/api/event -H "User-Agent: $UA1" -d '{"site":"t.test","t":"pageview","name":"","path":"/app-two","ref":"","q":"","props":"","uid":"","v":"","scr":"","lang":""}' >/dev/null
+t "explicit path is recorded" "/app-two" "$(curl -s -H "Authorization: Bearer tok" "$B/api/stats/pages?site=t.test&since=1h")"
+
+echo
+echo "PASS=$PASS FAIL=$FAIL"
+if [[ $FAIL -gt 0 ]]; then printf 'FAILED: %s\n' "${FAILED[@]}"; exit 1; fi

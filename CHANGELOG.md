@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.9.0 — 2026-07-27
+
+### Security: stored XSS in the server-rendered `/report` (please upgrade)
+
+Every dimension value in a report is attacker-controlled — ingest is open by design, so
+anyone who knows a site name can POST an event whose `path`, referrer or goal name contains
+markup. `/report` rendered those values into HTML unescaped, and `/report` is opened by the
+site OWNER **with their per-site read key in the URL** — so injected script ran on the vigie
+origin and could read that key out of `location.search`.
+
+Several call sites passed values through `jesc()`, which escapes for JSON string literals
+(quotes, backslashes, newlines) and leaves `<script>` fully intact — it is not an HTML escape.
+Added a real `hesc()` and applied it to every ingest-derived string rendered into the report:
+breakdown values, error messages, goal names, funnel steps and vitals labels. `/globe` was
+never affected (it escapes client-side).
+
+Found because the repo's own XSS test **never ran**: `tests/functional.sh` printed its
+PASS/FAIL summary and `exit`ed before the adversarial block, and the file was truncated
+mid-expression so the last test was unparseable. Both fixed — the summary now runs last, and
+the suite goes 89 → 102 tests, six of which were previously invisible.
+
+- **`data-path` on the snippet** — override the reported path instead of always using
+  `location.pathname`. This is what makes ONE site usable for a product family spread across
+  many domains that each serve a single page at `/`. Without it you had to choose between a
+  site per domain (losing family-wide funnels, and making every query N-way) or one site in
+  which every event has path `/` and the apps are indistinguishable. Now
+  `data-site="myfamily" data-path="/app-one"` turns the existing paths report into a per-app
+  breakdown. Omitting the attribute keeps the old behaviour exactly, so no existing snippet
+  changes.
+
 ## v0.8.1 — 2026-07-18
 
 - **`/report` — the live dashboard**: the full 22-section report rendered per request at `GET /report?site=&key=` (same per-site read key as `/globe`, now scoped to live + globe + report), with zero-JS period links (24h/7d/30d/12w). `vigie report --site X` prints the ready-to-open URL. Surfaces: `/report` = bookmark it, hart snapshot = share/archive it, `/globe` = watch it.
