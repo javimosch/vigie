@@ -46,12 +46,20 @@ Don't want to run it? **https://vigie.intrane.fr** is the hosted instance: your 
 
 ## Install
 
-Grab the latest release binary (Linux x86_64; needs `libssl3` + `libsqlite3`, present on any stock distro):
+Grab the latest release binary — Linux x86_64, statically linked, **no runtime
+dependencies and no glibc floor** (it runs on Alpine and `FROM scratch` too):
 
 ```sh
-curl -fsSL https://github.com/javimosch/vigie/releases/latest/download/vigie -o vigie
+curl -fsSL https://github.com/javimosch/vigie/releases/latest/download/vigie-linux-x86_64 -o vigie
 chmod +x vigie && ./vigie guide
 ```
+
+> Releases before v0.9.2 shipped a **dynamically** linked binary here, needing
+> `libssl3`, `libcrypto`, `libsqlite3` and glibc 2.34+ — under a headline
+> promising "one static binary". It would not have started on Debian 11, Ubuntu
+> 20.04, RHEL 8 or Alpine. `./release.sh` now refuses to produce a binary that
+> is not static, and the claim is checked from the outside by
+> [stranger](https://github.com/javimosch/stranger).
 
 Or build from source: [machin](https://github.com/javimosch/machin) `>= 0.107`, then `./build.sh`.
 
