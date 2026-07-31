@@ -65,11 +65,26 @@ func main() {
     if cmd == "help" { cmd_help_json() } else {
     if cmd == "feedback" { cmd_feedback() } else {
     if cmd == "update" { cmd_update() } else {
+    if cmd == "telemetry" {
+        if hasflag("--telemetry-off") == 1 {
+            td, tok := tel_set(0)
+            if tok == 0 { fail(90, "opt-out not persisted", "use VIGIE_TELEMETRY=0") }
+            emit(td)
+        } else if hasflag("--telemetry-on") == 1 {
+            td, tok := tel_set(1)
+            emit(td)
+        } else { emit(tel_status_json()) }
+    } else {
     if cmd == "version" { emit("{\"version\":\"" + vigie_version() + "\"}") } else {
         handled = 0
-    }}}}}}}}}}}}}}}}}}
+    }}}}}}}}}}}}}}}}}}}
     // A verb that matched nothing used to run off the end of main() and exit 0 with no output
     // at all — a typo was indistinguishable from success, which for an agent is the worst
     // possible failure mode.
     if handled == 0 { fail(80, "unknown command: " + cmd, "run: vigie help-json") }
+    // Telemetry fires HERE: after the verb finished and its result is on stdout,
+    // so it can never be why a command felt slow or why one failed. `serve`
+    // never reaches this line — it reports once at startup instead, because a
+    // per-request event would be a request log.
+    tel_report(cmd, 0)
 }

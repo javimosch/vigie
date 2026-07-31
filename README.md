@@ -63,6 +63,30 @@ chmod +x vigie && ./vigie guide
 
 Or build from source: [machin](https://github.com/javimosch/machin) `>= 0.107`, then `./build.sh`.
 
+## Telemetry
+
+vigie sends one anonymous usage event per invocation: version, os/arch, which
+verb ran, and whether it failed. **It never sends the analytics data vigie
+stores for you** — no sites, no visitors, no events, no identity, no paths, no
+arguments. `vigie telemetry` prints the exact payload, built by the same code
+that sends it.
+
+```sh
+VIGIE_TELEMETRY=0 vigie stats ...      # off, per invocation
+DO_NOT_TRACK=1 vigie stats ...         # honoured
+vigie telemetry --telemetry-off        # off, persistently
+VIGIE_TELEMETRY_URL=https://you/t      # or point it at your own collector
+```
+
+CI is detected and defaults to off. It never blocks (a hung collector costs two
+seconds, once), never retries, never changes an exit code, and never writes to
+stdout. Contract: [cli-telemetry-spec](https://github.com/javimosch/cli-telemetry-spec).
+
+There is an irony worth naming: vigie is an analytics tool that had no idea
+whether anyone used *it*. Every release shipped a dynamically linked binary
+under a README promising a static one, so the install was broken for the whole
+life of the project and nobody could report it.
+
 ## The 60-second tour
 
 ```sh

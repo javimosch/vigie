@@ -4,7 +4,7 @@
 
 // ---------- constants ----------
 
-func vigie_version() (v) { v = "0.9.1" }
+func vigie_version() (v) { v = "0.10.0" }
 func session_window() (s) { s = 1800 }
 
 // ---------- CLI arg helpers ----------
@@ -1707,6 +1707,7 @@ func guide_json() (g) {
     g = g + "\"realtime_and_globe\":\"`vigie stats live` = last-5-min feed (also GET /api/stats/live; add &raw=1 for the bare object — that is what hart refresh should pull). `vigie snapshot --globe --publish --live` publishes a rotating world-map artifact to hart; wire `hart refresh <id> --url .../api/stats/live?site=S&raw=1 --every 60s --header 'authorization: Bearer TOKEN'` and it repaints itself while watched.\","
     g = g + "\"sessions_retention_vitals_errors\":\"`vigie sessions list/show` = per-session rollups + ordered event trail. Retention cohorts need IDENTIFIED users: the daily-rotating visitor hash cannot follow a person across days (privacy by design), so call window.vigie.identify('user-id') in the browser or pass --uid/--actor on `vigie track`; `vigie stats retention` then computes weekly cohorts over uid. The snippet auto-collects web vitals (LCP/FCP/CLS/INP/TTFB, sent on pagehide; CLS is scaled x1000) -> `vigie stats vitals` (p50/p75/p90), and auto-captures JS errors + unhandled rejections (max 5/page) -> `vigie stats errors` (grouped by message).\","
     g = g + "\"gotchas\":[\"stats timeseries buckets are sparse — missing buckets mean zero, zero-fill client-side\",\"visitor counts across >1 day dedupe per-day (the hash rotates) — trend-accurate, not absolute uniques; use identify() for durable identity\",\"server-side events have device=browser=server\",\"the ingest endpoint answers 404 for sites you have not added — add them first\",\"vitals arrive on pagehide, so a tab that never hides sends none\"],"
+    g = g + "\"telemetry\":{\"what\":\"one POST per invocation after your result is on stdout: tool, version, event (install|run|error), verb name, os, arch, exit class, timestamp. No install id, no identity, no arguments, no paths, no analytics data — run `vigie telemetry` for the literal payload\",\"why\":\"downloads and clones cannot distinguish 'nobody uses this' from 'the install has been broken since the first release'. For vigie it was the second: every release shipped a dynamically linked binary under a README promising a static one\",\"off\":\"VIGIE_TELEMETRY=0, DO_NOT_TRACK=1, `vigie telemetry --telemetry-off`, or CI (detected, default off). Checked before any network code runs\",\"never\":\"does not block (a hung collector costs 2s, once), does not retry, does not change the exit code, never writes to stdout, and NEVER sends the analytics data vigie stores for you\",\"endpoint\":\"VIGIE_TELEMETRY_URL overrides it; the default collector aggregates day/version/event/os/verb counters and retains no IP\",\"spec\":\"https://github.com/javimosch/cli-telemetry-spec\"},"
     g = g + "\"exit_codes\":{\"0\":\"ok\",\"80-89\":\"input/validation\",\"90-99\":\"resource (not found/exists)\",\"100-109\":\"integration (network/db)\",\"110-119\":\"internal\"}}"
 }
 

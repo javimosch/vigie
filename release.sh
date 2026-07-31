@@ -12,7 +12,7 @@
 # turned up in grange.
 set -e
 cd "$(dirname "$0")"
-machin encode framework/machweb.src src/core.src src/geoip.src src/app.src src/globe.src src/globe_data.src > vigie.mfl
+machin encode framework/machweb.src src/core.src src/geoip.src src/telemetry.src src/app.src src/globe.src src/globe_data.src > vigie.mfl
 machin build vigie.mfl -o vigie-linux-x86_64 --static
 file vigie-linux-x86_64 | grep -q "statically linked" || { echo "release binary is NOT static — refusing"; exit 1; }
 ldd  vigie-linux-x86_64 2>&1 | grep -q "not a dynamic executable" || { echo "release binary has dynamic deps — refusing"; exit 1; }
