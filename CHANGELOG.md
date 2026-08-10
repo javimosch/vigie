@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.11.0 — 2026-08-10
+
+Found by an agent (commis) that dogfooded vigie's own stats API and correctly
+flagged an anomaly it couldn't fully explain: `visitors` (51) exceeded
+`pageviews` (27) on a 7-day window, and it named both bot traffic and a
+possible counting artifact as candidate causes. Both were real.
+
+**Visitor/session definition fixed.** `visitors` and `sessions` in `overview`,
+`timeseries`, `heatmap`, and `goals` used to count `COUNT(DISTINCT vid/sid)`
+across **any** event kind, but `pageviews` only counted `kind='pageview'`. A
+visitor who only ever fired a `vital` or `error` beacon — a bfcache/prerender
+restore can do exactly that with no pageview attached — was still counted as
+a "visitor," which could make visitors exceed pageviews for reasons that had
+nothing to do with traffic quality. All four now scope to `kind='pageview'`,
+consistent with the pageview count they sit next to.
+
+**Bot detection broadened, and bots are now filtered by default.** `ua_browser`
+previously only matched a `bot`/`Bot` substring. `is_bot` now also catches
+`spider`/`crawl`/`Slurp`/`facebookexternalhit`, headless/automation drivers
+(`HeadlessChrome`, `Puppeteer`, `Playwright`, `Selenium`, …), and generic HTTP
+client libraries (`python-requests`, `Go-http-client`, `okhttp`, `Wget`, …).
+Bot-classified traffic is now excluded from every headline number — pageviews,
+visitors, sessions, custom events, bounce rate, session duration, timeseries,
+entry/exit pages, the heatmap, event-props, goal conversions, `live` (so a bot
+no longer gets a pin on the globe) — and every `breakdown` dimension **except
+`browsers` itself**, which stays the audit view: it is the one place you can
+still see how much bot traffic there was and what it looked like. `overview`
+now reports the exact pageview count removed as `bots_excluded`, so filtering
+is disclosed, never silent.
+
 ## v0.9.1 — 2026-07-27
 
 Full compliance with the four [agent-first CLI specs](https://blog.intrane.fr/agent-first-cli-specs).

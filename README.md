@@ -12,13 +12,14 @@ vigie serve --port 8090 --db vigie.db
 # add to your pages:
 #   <script defer src="https://your-host/vigie.js" data-site="example.com"></script>
 vigie stats overview --site example.com --since 7d
-# {"ok":true,"data":{"pageviews":1234,"visitors":410,"sessions":520,"bounce_rate_pct":38,...}}
+# {"ok":true,"data":{"pageviews":1234,"visitors":410,"sessions":520,"bounce_rate_pct":38,...,"bots_excluded":57}}
 ```
 
 ## Why another analytics tool
 
 - **Agent-first.** Complies with the [agent-first CLI specs](https://cli-specs.intrane.fr/): `guide` (embedded manual), `help-json` (machine catalog), JSON-only stdout, semantic exit codes (80–119), `feedback`, sha256-verified atomic `update`.
 - **Cookieless & consent-banner-free.** Visitors are `sha256(secret + day + site + ip + ua)[0:16]` — the salt rotates daily, the raw IP is never stored.
+- **Bots are filtered, not silently mixed in.** UA-classified bot traffic (crawlers, headless browsers, HTTP client libraries) is excluded from every headline number — pageviews, visitors, sessions, and every breakdown dimension except `browsers` itself, which stays the audit view so you can still see how much was filtered. `overview` reports the exact count removed as `bots_excluded`. A "visitor" also means someone who viewed a page: a stray web-vitals or error beacon with no attached pageview (a bfcache/prerender artifact) no longer mints a phantom visitor.
 - **Agents are users too.** `vigie track --site s --name deploy --actor ci` records server-side events with no browser. Your cron job's activity is a first-class analytics stream.
 - **The dashboard is an artifact.** `vigie snapshot --site s --publish` renders a dark-mode HTML report and POSTs it to a hart instance → live URL. No always-on frontend to build, secure, or pay for.
 - **One file, one binary.** SQLite (WAL) storage, `vigie prune` for retention. No ClickHouse at the scale most of us actually operate.

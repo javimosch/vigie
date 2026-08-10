@@ -103,6 +103,24 @@ t "cli stats after http" '"pageviews":2' "$($BIN stats overview --site t.test --
 t "cli sessions"   '"entry"'    "$($BIN sessions list --site t.test --since 1h --db $DB)"
 t "cli users show missing exit" "90" "$($BIN users show --site t.test --uid ghost --db $DB >/dev/null 2>&1; echo $?)"
 
+# ---- bot detection + visitor/pageview definition ----
+# Regression for a real anomaly found live: visitors could exceed pageviews
+# because "visitors" counted ANY event kind (a vitals-only beacon with no
+# pageview attached still minted a vid), and nothing excluded bot traffic
+# from any headline number.
+BOTUA="Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
+OV_BEFORE="$(curl -s -H "Authorization: Bearer tok" "$B/api/stats/overview?site=t.test&since=1h")"
+PV_BEFORE=$(echo "$OV_BEFORE" | J "['data']['pageviews']")
+VIS_BEFORE=$(echo "$OV_BEFORE" | J "['data']['visitors']")
+t "event bot pageview" "200" "$(ev '{"site":"t.test","t":"pageview","name":"","path":"/","ref":"","q":"","props":"","uid":"","v":"","scr":"","lang":""}' "$BOTUA" 9.9.9.1)"
+OV_AFTER="$(curl -s -H "Authorization: Bearer tok" "$B/api/stats/overview?site=t.test&since=1h")"
+t "bot pageview excluded from overview" "$PV_BEFORE" "$(echo "$OV_AFTER" | J "['data']['pageviews']")"
+t "bot counted in bots_excluded" "yes" "$([[ $(echo "$OV_AFTER" | J "['data']['bots_excluded']") -ge 1 ]] && echo yes)"
+t "browsers dim still shows bot (audit)" '"value":"bot"' "$(curl -s -H "Authorization: Bearer tok" "$B/api/stats/browsers?site=t.test&since=1h")"
+t "countries dim excludes bot" "0" "$(curl -s -H "Authorization: Bearer tok" "$B/api/stats/countries?site=t.test&since=1h" | grep -c '"value":"bot"')"
+t "event vitals-only new visitor" "200" "$(ev '{"site":"t.test","t":"vital","name":"LCP","path":"/","ref":"","q":"","props":"","uid":"","v":"1000","scr":"","lang":""}' "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15) Chrome/126.0.0.0 Safari/537" 9.9.9.2)"
+OV_AFTER2="$(curl -s -H "Authorization: Bearer tok" "$B/api/stats/overview?site=t.test&since=1h")"
+t "vitals-only beacon does not mint a visitor" "$VIS_BEFORE" "$(echo "$OV_AFTER2" | J "['data']['visitors']")"
 
 # ---- adversarial ----
 t "malformed json body" "200 400" "200 400 $(curl -s -o /dev/null -w '%{http_code}' -X POST $B/api/event -d '{{{not-json')"

@@ -4,7 +4,7 @@
 
 // ---------- constants ----------
 
-func vigie_version() (v) { v = "0.10.0" }
+func vigie_version() (v) { v = "0.11.0" }
 func session_window() (s) { s = 1800 }
 
 // ---------- CLI arg helpers ----------
@@ -195,6 +195,40 @@ func qparam(q, name) (val) {
     }
 }
 
+// is_bot: broader than a "bot"/"Bot" substring — catches the common crawler
+// tokens that name themselves "Spider"/"Slurp", headless/automation drivers
+// (a real browser scripted by an agent still IS a bot for traffic-counting
+// purposes), and generic HTTP client libraries that never render a page.
+// Not exhaustive — good UA-cloaking bots defeat any string match — but it is
+// a real net over what shipped before, which only checked one substring.
+func is_bot(ua) (yes) {
+    yes = 0
+    if contains(ua, "bot") { yes = 1 }
+    if contains(ua, "Bot") { yes = 1 }
+    if contains(ua, "spider") { yes = 1 }
+    if contains(ua, "Spider") { yes = 1 }
+    if contains(ua, "crawl") { yes = 1 }
+    if contains(ua, "Crawl") { yes = 1 }
+    if contains(ua, "Slurp") { yes = 1 }
+    if contains(ua, "facebookexternalhit") { yes = 1 }
+    if contains(ua, "HeadlessChrome") { yes = 1 }
+    if contains(ua, "Headless") { yes = 1 }
+    if contains(ua, "PhantomJS") { yes = 1 }
+    if contains(ua, "Puppeteer") { yes = 1 }
+    if contains(ua, "Playwright") { yes = 1 }
+    if contains(ua, "Selenium") { yes = 1 }
+    if contains(ua, "python-requests") { yes = 1 }
+    if contains(ua, "python-urllib") { yes = 1 }
+    if contains(ua, "Go-http-client") { yes = 1 }
+    if contains(ua, "okhttp") { yes = 1 }
+    if contains(ua, "libwww-perl") { yes = 1 }
+    if contains(ua, "Wget") { yes = 1 }
+    if contains(ua, "axios/") { yes = 1 }
+    if contains(ua, "node-fetch") { yes = 1 }
+    if contains(ua, "Scrapy") { yes = 1 }
+    if ua == "" { yes = 1 }
+}
+
 func ua_browser(ua) (b) {
     b = "other"
     if contains(ua, "curl") { b = "curl" }
@@ -209,8 +243,11 @@ func ua_browser(ua) (b) {
     if contains(ua, "Safari/") {
         if contains(ua, "Chrome/") == false { b = "safari" }
     }
-    if contains(ua, "bot") { b = "bot" }
-    if contains(ua, "Bot") { b = "bot" }
+    // curl gets its own category above and stays out of "bot" — it is
+    // usually a human debugging the endpoint, not automated traffic.
+    if is_bot(ua) == 1 {
+        if contains(ua, "curl") == false { b = "bot" }
+    }
 }
 
 func ua_device(ua) (d) {
@@ -704,18 +741,30 @@ func addp(base, fpx) (p) {
     for _, x := range fpx { p = append(p, x) }
 }
 
+// A "visitor" or "session" means someone who viewed a page — not someone who
+// merely triggered a vitals/error beacon with no page attached (a prerendered
+// or bfcache-restored page can do exactly that). Scoping both to kind =
+// 'pageview' keeps them consistent with the pageviews count they sit next to;
+// unscoped, visitors/sessions could exceed pageviews for reasons that have
+// nothing to do with traffic quality — found live, via a commis agent that
+// investigated the mismatch and correctly could not fully explain it with
+// the tools it had. Bots are excluded from every number here by design (see
+// is_bot); bots_excluded discloses how many pageviews that removed, so
+// filtering never happens silently.
 func overview_json(db, site, since, fw, fpx) (j) {
     cutoff := str(now() - since_secs(since))
     p := addp([]string{site, cutoff}, fpx)
-    pageviews := q_count(db, "SELECT COUNT(*) AS n FROM events WHERE site = ? AND ts > ? AND kind = 'pageview'" + fw, p)
-    visitors := q_count(db, "SELECT COUNT(DISTINCT vid) AS n FROM events WHERE site = ? AND ts > ?" + fw, p)
-    sessions := q_count(db, "SELECT COUNT(DISTINCT sid) AS n FROM events WHERE site = ? AND ts > ?" + fw, p)
-    custom := q_count(db, "SELECT COUNT(*) AS n FROM events WHERE site = ? AND ts > ? AND kind = 'event'" + fw, p)
-    bounced := q_count(db, "SELECT COUNT(*) AS n FROM (SELECT sid FROM events WHERE site = ? AND ts > ? AND kind = 'pageview'" + fw + " GROUP BY sid HAVING COUNT(*) = 1)", p)
-    dur := q_count(db, "SELECT CAST(COALESCE(AVG(d),0) AS INTEGER) AS n FROM (SELECT MAX(ts)-MIN(ts) AS d FROM events WHERE site = ? AND ts > ?" + fw + " GROUP BY sid)", p)
+    bex := " AND browser != 'bot'"
+    pageviews := q_count(db, "SELECT COUNT(*) AS n FROM events WHERE site = ? AND ts > ? AND kind = 'pageview'" + bex + fw, p)
+    visitors := q_count(db, "SELECT COUNT(DISTINCT vid) AS n FROM events WHERE site = ? AND ts > ? AND kind = 'pageview'" + bex + fw, p)
+    sessions := q_count(db, "SELECT COUNT(DISTINCT sid) AS n FROM events WHERE site = ? AND ts > ? AND kind = 'pageview'" + bex + fw, p)
+    custom := q_count(db, "SELECT COUNT(*) AS n FROM events WHERE site = ? AND ts > ? AND kind = 'event'" + bex + fw, p)
+    bounced := q_count(db, "SELECT COUNT(*) AS n FROM (SELECT sid FROM events WHERE site = ? AND ts > ? AND kind = 'pageview'" + bex + fw + " GROUP BY sid HAVING COUNT(*) = 1)", p)
+    dur := q_count(db, "SELECT CAST(COALESCE(AVG(d),0) AS INTEGER) AS n FROM (SELECT MAX(ts)-MIN(ts) AS d FROM events WHERE site = ? AND ts > ? AND kind = 'pageview'" + bex + fw + " GROUP BY sid)", p)
+    bots := q_count(db, "SELECT COUNT(*) AS n FROM events WHERE site = ? AND ts > ? AND kind = 'pageview' AND browser = 'bot'" + fw, p)
     bounce_pct := 0
     if sessions > 0 { bounce_pct = bounced * 100 / sessions }
-    j = "{\"site\":\"" + site + "\",\"since\":\"" + since + "\",\"pageviews\":" + str(pageviews) + ",\"visitors\":" + str(visitors) + ",\"sessions\":" + str(sessions) + ",\"custom_events\":" + str(custom) + ",\"bounce_rate_pct\":" + str(bounce_pct) + ",\"avg_session_secs\":" + str(dur) + "}"
+    j = "{\"site\":\"" + site + "\",\"since\":\"" + since + "\",\"pageviews\":" + str(pageviews) + ",\"visitors\":" + str(visitors) + ",\"sessions\":" + str(sessions) + ",\"custom_events\":" + str(custom) + ",\"bounce_rate_pct\":" + str(bounce_pct) + ",\"avg_session_secs\":" + str(dur) + ",\"bots_excluded\":" + str(bots) + "}"
 }
 
 // ---------- CLI verbs ----------
@@ -806,23 +855,25 @@ func timeseries_json(db, site, since, bucket, fw, fpx) (j) {
     if bucket == "hour" { fmt = "%Y-%m-%dT%H:00" }
     cutoff := str(now() - since_secs(since))
     p := addp([]string{fmt, site, cutoff}, fpx)
-    j = sqlite_query(db, "SELECT strftime(?, ts, 'unixepoch') AS bucket, COUNT(CASE WHEN kind='pageview' THEN 1 END) AS pageviews, COUNT(DISTINCT vid) AS visitors, COUNT(CASE WHEN kind='event' THEN 1 END) AS events FROM events WHERE site = ? AND ts > ?" + fw + " GROUP BY bucket ORDER BY bucket", p)
+    j = sqlite_query(db, "SELECT strftime(?, ts, 'unixepoch') AS bucket, COUNT(CASE WHEN kind='pageview' AND browser != 'bot' THEN 1 END) AS pageviews, COUNT(DISTINCT CASE WHEN kind='pageview' AND browser != 'bot' THEN vid END) AS visitors, COUNT(CASE WHEN kind='event' AND browser != 'bot' THEN 1 END) AS events FROM events WHERE site = ? AND ts > ?" + fw + " GROUP BY bucket ORDER BY bucket", p)
 }
 
-// entry/exit pages: first/last pageview path per session, aggregated
+// entry/exit pages: first/last pageview path per session, aggregated. Bots
+// are excluded before the ROW_NUMBER() window so a crawler's single-hit
+// session cannot masquerade as an entry/exit page for a human.
 func edge_pages_json(db, site, since, limitn, last) (j) {
     n := parse_int(limitn)
     if n < 1 { n = 10 }
     ordr := "ts, id"
     if last == 1 { ordr = "ts DESC, id DESC" }
     cutoff := str(now() - since_secs(since))
-    j = sqlite_query(db, "SELECT path AS value, COUNT(*) AS hits, COUNT(DISTINCT vid) AS visitors FROM (SELECT sid, vid, path, ROW_NUMBER() OVER (PARTITION BY sid ORDER BY " + ordr + ") AS rn FROM events WHERE site = ? AND ts > ? AND kind = 'pageview') WHERE rn = 1 GROUP BY path ORDER BY hits DESC LIMIT " + str(n), []string{site, cutoff})
+    j = sqlite_query(db, "SELECT path AS value, COUNT(*) AS hits, COUNT(DISTINCT vid) AS visitors FROM (SELECT sid, vid, path, ROW_NUMBER() OVER (PARTITION BY sid ORDER BY " + ordr + ") AS rn FROM events WHERE site = ? AND ts > ? AND kind = 'pageview' AND browser != 'bot') WHERE rn = 1 GROUP BY path ORDER BY hits DESC LIMIT " + str(n), []string{site, cutoff})
 }
 
 // weekday x hour traffic heatmap (dow 0=Sunday, hr 00-23, UTC)
 func heatmap_json(db, site, since) (j) {
     cutoff := str(now() - since_secs(since))
-    j = sqlite_query(db, "SELECT CAST(strftime('%w', ts, 'unixepoch') AS INTEGER) AS dow, CAST(strftime('%H', ts, 'unixepoch') AS INTEGER) AS hr, COUNT(CASE WHEN kind='pageview' THEN 1 END) AS pageviews, COUNT(DISTINCT vid) AS visitors FROM events WHERE site = ? AND ts > ? GROUP BY dow, hr ORDER BY dow, hr", []string{site, cutoff})
+    j = sqlite_query(db, "SELECT CAST(strftime('%w', ts, 'unixepoch') AS INTEGER) AS dow, CAST(strftime('%H', ts, 'unixepoch') AS INTEGER) AS hr, COUNT(CASE WHEN kind='pageview' AND browser != 'bot' THEN 1 END) AS pageviews, COUNT(DISTINCT CASE WHEN kind='pageview' AND browser != 'bot' THEN vid END) AS visitors FROM events WHERE site = ? AND ts > ? GROUP BY dow, hr ORDER BY dow, hr", []string{site, cutoff})
 }
 
 // custom-event property aggregation (SQLite JSON1 over the props column)
@@ -830,7 +881,7 @@ func event_props_json(db, site, since, evname, limitn) (j) {
     n := parse_int(limitn)
     if n < 1 { n = 15 }
     cutoff := str(now() - since_secs(since))
-    j = sqlite_query(db, "SELECT e.name || ' . ' || j.key || ' = ' || j.value AS value, COUNT(*) AS hits, COUNT(DISTINCT e.vid) AS visitors FROM events e, json_each(e.props) j WHERE e.site = ? AND e.ts > ? AND e.kind = 'event' AND e.props != '' AND (e.name = ? OR ? = '') GROUP BY e.name, j.key, j.value ORDER BY hits DESC LIMIT " + str(n), []string{site, cutoff, evname, evname})
+    j = sqlite_query(db, "SELECT e.name || ' . ' || j.key || ' = ' || j.value AS value, COUNT(*) AS hits, COUNT(DISTINCT e.vid) AS visitors FROM events e, json_each(e.props) j WHERE e.site = ? AND e.ts > ? AND e.kind = 'event' AND e.browser != 'bot' AND e.props != '' AND (e.name = ? OR ? = '') GROUP BY e.name, j.key, j.value ORDER BY hits DESC LIMIT " + str(n), []string{site, cutoff, evname, evname})
 }
 
 // breakdown dimensions: whitelisted column + row-kind restriction; "" = unknown dimension
@@ -858,6 +909,10 @@ func breakdown_json(db, dim, site, since, limitn, fw, fpx) (j) {
         cond = " AND kind = 'pageview'"
     }
     if col == "" { return j }
+    // Every dimension excludes bots by default EXCEPT "browsers" itself —
+    // that one IS the classification/audit view, and hiding bot rows from it
+    // would remove the only place left to see how much traffic got filtered.
+    if dim != "browsers" { cond = cond + " AND browser != 'bot'" }
     n := parse_int(limitn)
     if n < 1 { n = 10 }
     cutoff := str(now() - since_secs(since))
@@ -1040,14 +1095,16 @@ func cmd_goal() {
 
 func goals_json(db, site, since) (out) {
     cutoff := str(now() - since_secs(since))
-    total := q_count(db, "SELECT COUNT(DISTINCT sid) AS n FROM events WHERE site = ? AND ts > ?", []string{site, cutoff})
+    // Same session definition as overview: a session means a pageview, and a
+    // bot cannot convert — same reasoning as everywhere else in this file.
+    total := q_count(db, "SELECT COUNT(DISTINCT sid) AS n FROM events WHERE site = ? AND ts > ? AND kind = 'pageview' AND browser != 'bot'", []string{site, cutoff})
     rows := sqlite_query(db, "SELECT name, kind, matcher FROM goals WHERE site = ? ORDER BY id", []string{site})
     goals := parse(rows, []GoalRow{})
     out = "["
     i := 0
     for _, g := range goals {
         clause, param := goal_clause(g.kind, g.matcher)
-        conv := q_count(db, "SELECT COUNT(DISTINCT sid) AS n FROM events WHERE site = ? AND ts > ? AND " + clause, []string{site, cutoff, param})
+        conv := q_count(db, "SELECT COUNT(DISTINCT sid) AS n FROM events WHERE site = ? AND ts > ? AND browser != 'bot' AND " + clause, []string{site, cutoff, param})
         rate := 0
         if total > 0 { rate = conv * 100 / total }
         if i > 0 { out = out + "," }
@@ -1297,18 +1354,21 @@ func errors_json(db, site, since, limitn) (j) {
 
 // ---------- realtime (last 5 minutes) ----------
 
+// live_json also feeds the globe visualization — a bot pin looks identical to
+// a real one on a map, so this excludes bots the same as every other stat.
 func live_json(db, site) (j) {
     cutoff := str(now() - 300)
     p := []string{site, cutoff}
-    actives := q_count(db, "SELECT COUNT(DISTINCT vid) AS n FROM events WHERE site = ? AND ts > ?", p)
-    pv := q_count(db, "SELECT COUNT(*) AS n FROM events WHERE site = ? AND ts > ? AND kind = 'pageview'", p)
-    pages := sqlite_query(db, "SELECT path AS value, COUNT(*) AS hits FROM events WHERE site = ? AND ts > ? AND kind = 'pageview' GROUP BY path ORDER BY hits DESC LIMIT 5", p)
-    countries := sqlite_query(db, "SELECT country AS value, COUNT(DISTINCT vid) AS visitors FROM events WHERE site = ? AND ts > ? AND country != '' GROUP BY country ORDER BY visitors DESC", p)
-    latest := sqlite_query(db, "SELECT ts, kind, name, path, country FROM events WHERE site = ? AND ts > ? ORDER BY ts DESC LIMIT 10", p)
+    bex := " AND browser != 'bot'"
+    actives := q_count(db, "SELECT COUNT(DISTINCT vid) AS n FROM events WHERE site = ? AND ts > ? AND kind = 'pageview'" + bex, p)
+    pv := q_count(db, "SELECT COUNT(*) AS n FROM events WHERE site = ? AND ts > ? AND kind = 'pageview'" + bex, p)
+    pages := sqlite_query(db, "SELECT path AS value, COUNT(*) AS hits FROM events WHERE site = ? AND ts > ? AND kind = 'pageview'" + bex + " GROUP BY path ORDER BY hits DESC LIMIT 5", p)
+    countries := sqlite_query(db, "SELECT country AS value, COUNT(DISTINCT vid) AS visitors FROM events WHERE site = ? AND ts > ? AND country != ''" + bex + " GROUP BY country ORDER BY visitors DESC", p)
+    latest := sqlite_query(db, "SELECT ts, kind, name, path, country FROM events WHERE site = ? AND ts > ?" + bex + " ORDER BY ts DESC LIMIT 10", p)
     day_ago := str(now() - 86400)
-    countries24 := sqlite_query(db, "SELECT country AS value, COUNT(DISTINCT vid) AS visitors FROM events WHERE site = ? AND ts > ? AND country != '' GROUP BY country ORDER BY visitors DESC", []string{site, day_ago})
-    cities5 := sqlite_query(db, "SELECT loc AS value, MIN(city) AS city, COUNT(DISTINCT vid) AS visitors FROM events WHERE site = ? AND ts > ? AND loc != '' GROUP BY loc ORDER BY visitors DESC LIMIT 50", p)
-    cities24 := sqlite_query(db, "SELECT loc AS value, MIN(city) AS city, COUNT(DISTINCT vid) AS visitors FROM events WHERE site = ? AND ts > ? AND loc != '' GROUP BY loc ORDER BY visitors DESC LIMIT 200", []string{site, day_ago})
+    countries24 := sqlite_query(db, "SELECT country AS value, COUNT(DISTINCT vid) AS visitors FROM events WHERE site = ? AND ts > ? AND country != ''" + bex + " GROUP BY country ORDER BY visitors DESC", []string{site, day_ago})
+    cities5 := sqlite_query(db, "SELECT loc AS value, MIN(city) AS city, COUNT(DISTINCT vid) AS visitors FROM events WHERE site = ? AND ts > ? AND loc != ''" + bex + " GROUP BY loc ORDER BY visitors DESC LIMIT 50", p)
+    cities24 := sqlite_query(db, "SELECT loc AS value, MIN(city) AS city, COUNT(DISTINCT vid) AS visitors FROM events WHERE site = ? AND ts > ? AND loc != ''" + bex + " GROUP BY loc ORDER BY visitors DESC LIMIT 200", []string{site, day_ago})
     j = "{\"site\":\"" + site + "\",\"window_secs\":300,\"active_visitors\":" + str(actives) + ",\"pageviews\":" + str(pv) + ",\"pages\":" + pages + ",\"countries\":" + countries + ",\"countries_24h\":" + countries24 + ",\"cities\":" + cities5 + ",\"cities_24h\":" + cities24 + ",\"latest\":" + latest + ",\"generated\":" + str(now()) + "}"
 }
 
