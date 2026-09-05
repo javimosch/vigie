@@ -22,6 +22,7 @@ func handle(req) (res) {
         if has_prefix(req.path, "/api/event") { return handle_event(req) }
         if has_prefix(req.path, "/api/sites") { return handle_site_add(req) }
     }
+    if req.method == "GET" && has_prefix(req.path, "/api/sites") { return handle_site_list(req) }
     if has_prefix(req.path, "/api/stats/") { return handle_stats(req) }
     if has_prefix(req.path, "/api/sessions") { return handle_sessions(req) }
     if has_prefix(req.path, "/api/users") { return handle_users(req) }
