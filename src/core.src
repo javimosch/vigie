@@ -720,7 +720,7 @@ func landing_html() (h) {
 
     h = h + "<h2>Read more</h2><p><a href='https://blog.intrane.fr/analytics-with-no-dashboard'>Web Analytics With No Dashboard (But There Is a Globe)</a> — why vigie exists · <a href='https://blog.intrane.fr/the-agent-that-signed-up-and-paid'>The Agent That Signed Up and Paid for Its Own Analytics</a> — the autonomous x402 loop, live transcript.</p>"
 
-    h = h + "<footer>MIT · clean-room · built in <a href='https://github.com/javimosch/machin'>MFL</a> · IP geolocation by <a href='https://db-ip.com'>DB-IP</a> · part of the agent-web stack: <a href='https://peage.intrane.fr'>péage</a> pays, <a href='https://relais.intrane.fr'>relais</a> receives, <a href='https://sso.intrane.fr'>portier</a> authenticates — <b>vigie watches</b> · <a href='/_health'>health</a> · <a href='https://status.dev.intrane.fr/g/vigie'>status</a></footer>"
+    h = h + "<footer>MIT · clean-room · built in <a href='https://github.com/javimosch/machin'>MFL</a> · IP geolocation by <a href='https://db-ip.com'>DB-IP</a> · part of the agent-web stack: <a href='https://peage.intrane.fr'>péage</a> pays, <a href='https://relais.intrane.fr'>relais</a> receives, <a href='https://portier.intrane.fr'>portier</a> authenticates — <b>vigie watches</b> · <a href='/_health'>health</a> · <a href='https://status.dev.intrane.fr/g/vigie'>status</a></footer>"
     h = h + "</div></body></html>"
 }
 
