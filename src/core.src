@@ -687,6 +687,7 @@ func handle_track_rules(req) (res) {
     if known == "[]" {
         sqlite_close(db)
         res = ok_json("{\"ok\":true,\"rules\":[]}")
+        res = with_header(res, "Access-Control-Allow-Origin", "*")
         return res
     }
     rows := sqlite_query(db, "SELECT name, selector, text_match, kind FROM track_rules WHERE site = ? AND enabled = 1 ORDER BY id", []string{site})
@@ -694,6 +695,12 @@ func handle_track_rules(req) (res) {
     // rows is a JSON array of objects; rename to "rules" for the snippet.
     res = ok_json("{\"ok\":true,\"rules\":" + rows + "}")
     res = with_header(res, "Cache-Control", "public, max-age=300")
+    // The snippet reads this with XMLHttpRequest from the tracked site's origin,
+    // so without CORS every browser blocks it — silently, because the snippet
+    // swallows the error and falls back to no rules. A wildcard is right here:
+    // the body is a site's public click-selectors, there are no credentials and
+    // the endpoint is already open, so echoing Origin would buy nothing.
+    res = with_header(res, "Access-Control-Allow-Origin", "*")
 }
 
 func llms_txt() (s) {
